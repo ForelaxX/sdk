@@ -8,6 +8,8 @@ import 'dart:async' show Future;
 
 import 'dart:collection' show Queue;
 
+import 'package:_fe_analyzer_shared/src/messages/severity.dart' show Severity;
+
 import 'package:kernel/ast.dart' show Class, DartType, Library;
 
 import 'scope.dart';
@@ -36,8 +38,6 @@ import 'messages.dart'
         templateSourceBodySummary;
 
 import 'problems.dart' show internalProblem, unhandled;
-
-import 'severity.dart' show Severity;
 
 import 'target_implementation.dart' show TargetImplementation;
 
@@ -314,17 +314,6 @@ charOffset: $charOffset
 fileUri: $fileUri
 severity: $severity
 """;
-    // TODO(askesc): Swap message and context around for interface checks
-    // and mixin overrides to make comparing context here unnecessary.
-    if (context != null) {
-      for (LocatedMessage contextMessage in context) {
-        trace += """
-message: ${contextMessage.message}
-charOffset: ${contextMessage.charOffset}
-fileUri: ${contextMessage.uri}
-""";
-      }
-    }
     if (!seenMessages.add(trace)) return null;
     if (message.code.severity == Severity.context) {
       internalProblem(

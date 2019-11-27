@@ -2,6 +2,8 @@
 // for details. All rights reserved. Use of this source code is governed by a
 // BSD-style license that can be found in the LICENSE file.
 
+// @dart = 2.6
+
 /// This library defines the representation of runtime types.
 part of dart._runtime;
 
@@ -19,7 +21,7 @@ final metadata = JS('', 'Symbol("metadata")');
 ///
 ///   - All other types are represented as instances of class [DartType],
 ///     defined in this module.
-///     - Dynamic, Void, and Bottom are singleton instances of sentinal
+///     - Dynamic, Void, and Bottom are singleton instances of sentinel
 ///       classes.
 ///     - Function types are instances of subclasses of AbstractFunctionType.
 ///
@@ -516,6 +518,13 @@ class TypeVariable extends DartType {
   toString() => name;
 }
 
+class Variance {
+  static const int unrelated = 0;
+  static const int covariant = 1;
+  static const int contravariant = 2;
+  static const int invariant = 3;
+}
+
 class GenericFunctionType extends AbstractFunctionType {
   final _instantiateTypeParts;
   final int formalCount;
@@ -898,6 +907,8 @@ bool _isSubtype(t1, t2) => JS('', '''(() => {
     if (${_isFutureOr(t2)}) {
       let t2TypeArg = ${getGenericArgs(t2)}[0];
       // FutureOr<A> <: FutureOr<B> iff A <: B
+      // TODO(nshahan): Proven to not actually be true and needs cleanup.
+      // https://github.com/dart-lang/sdk/issues/38818
       return $_isSubtype(t1TypeArg, t2TypeArg);
     }
 
@@ -1028,9 +1039,23 @@ bool _isInterfaceSubtype(t1, t2) => JS('', '''(() => {
     if (typeArguments1.length != typeArguments2.length) {
       $assertFailed();
     }
+    let variances = $getGenericArgVariances($t1);
     for (let i = 0; i < typeArguments1.length; ++i) {
-      if (!$_isSubtype(typeArguments1[i], typeArguments2[i])) {
-        return false;
+      // When using implicit variance, variances will be undefined and
+      // considered covariant.
+      if (variances === void 0 || variances[i] == ${Variance.covariant}) {
+        if (!$_isSubtype(typeArguments1[i], typeArguments2[i])) {
+          return false;
+        }
+      } else if (variances[i] == ${Variance.contravariant}) {
+        if (!$_isSubtype(typeArguments2[i], typeArguments1[i])) {
+          return false;
+        }
+      } else if (variances[i] == ${Variance.invariant}) {
+        if (!$_isSubtype(typeArguments1[i], typeArguments2[i]) ||
+            !$_isSubtype(typeArguments2[i], typeArguments1[i])) {
+          return false;
+        }
       }
     }
     return true;

@@ -15,51 +15,36 @@ main() {
 
 @reflectiveTest
 class MustBeASubtypeTest extends DriverResolutionTest {
-  test_asFunction() async {
-    await assertErrorsInCode(r'''
-import 'dart:ffi';
-typedef TPrime = int Function(int);
-typedef F = String Function(String);
-class C {
-  void f(Pointer<NativeFunction<TPrime>> p) {
-    p.asFunction<F>();
-  }
-}
-''', [
-      error(FfiCode.MUST_BE_A_SUBTYPE, 165, 1),
-    ]);
-  }
-
   test_fromFunction_firstArgument() async {
     await assertErrorsInCode(r'''
 import 'dart:ffi';
-typedef T = int Function(int);
+typedef T = Int8 Function(Int8);
 String f(int i) => i.toString();
 void g() {
   Pointer.fromFunction<T>(f, 5);
 }
 ''', [
-      error(FfiCode.MUST_BE_A_SUBTYPE, 120, 1),
+      error(FfiCode.MUST_BE_A_SUBTYPE, 122, 1),
     ]);
   }
 
   test_fromFunction_secondArgument() async {
     await assertErrorsInCode(r'''
 import 'dart:ffi';
-typedef T = int Function(int);
+typedef T = Int8 Function(Int8);
 int f(int i) => i * 2;
 void g() {
   Pointer.fromFunction<T>(f, '');
 }
 ''', [
-      error(FfiCode.MUST_BE_A_SUBTYPE, 113, 2),
+      error(FfiCode.MUST_BE_A_SUBTYPE, 115, 2),
     ]);
   }
 
   test_fromFunction_valid_oneArgument() async {
     await assertNoErrorsInCode(r'''
 import 'dart:ffi';
-typedef T = void Function(int);
+typedef T = Void Function(Int8);
 void f(int i) {}
 void g() {
   Pointer.fromFunction<T>(f);
@@ -70,7 +55,7 @@ void g() {
   test_fromFunction_valid_twoArguments() async {
     await assertNoErrorsInCode(r'''
 import 'dart:ffi';
-typedef T = int Function(int);
+typedef T = Int8 Function(Int8);
 int f(int i) => i * 2;
 void g() {
   Pointer.fromFunction<T>(f, 42);
@@ -78,16 +63,17 @@ void g() {
 ''');
   }
 
-  test_lookupFunction() async {
+  test_lookupFunction_F() async {
     await assertErrorsInCode(r'''
 import 'dart:ffi';
-typedef S = int Function(int);
-typedef F = String Function(String);
-void f(DynamicLibrary lib) {
-  lib.lookupFunction<S, F>('g');
+typedef T = Int8 Function(Int8);
+class C<F extends int Function(int)> {
+  void f(DynamicLibrary lib, NativeFunction x) {
+    lib.lookupFunction<T, F>('g');
+  }
 }
 ''', [
-      error(FfiCode.MUST_BE_A_SUBTYPE, 140, 1),
+      error(FfiCode.MUST_BE_A_SUBTYPE, 166, 1),
     ]);
   }
 }

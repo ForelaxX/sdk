@@ -181,6 +181,7 @@ class FfiTransformer extends Transformer {
 
   final Class intClass;
   final Class doubleClass;
+  final Class listClass;
   final Class pragmaClass;
   final Field pragmaName;
   final Field pragmaOptions;
@@ -191,8 +192,6 @@ class FfiTransformer extends Transformer {
   final Class pointerClass;
   final Class structClass;
   final Procedure castMethod;
-  final Procedure loadMethod;
-  final Procedure storeMethod;
   final Procedure offsetByMethod;
   final Procedure elementAtMethod;
   final Procedure asFunctionMethod;
@@ -218,6 +217,7 @@ class FfiTransformer extends Transformer {
       : env = new TypeEnvironment(coreTypes, hierarchy),
         intClass = coreTypes.intClass,
         doubleClass = coreTypes.doubleClass,
+        listClass = coreTypes.listClass,
         pragmaClass = coreTypes.pragmaClass,
         pragmaName = coreTypes.pragmaName,
         pragmaOptions = coreTypes.pragmaOptions,
@@ -227,13 +227,11 @@ class FfiTransformer extends Transformer {
         pointerClass = index.getClass('dart:ffi', 'Pointer'),
         structClass = index.getClass('dart:ffi', 'Struct'),
         castMethod = index.getMember('dart:ffi', 'Pointer', 'cast'),
-        loadMethod = index.getMember('dart:ffi', 'Pointer', 'load'),
-        storeMethod = index.getMember('dart:ffi', 'Pointer', 'store'),
         offsetByMethod = index.getMember('dart:ffi', 'Pointer', '_offsetBy'),
         elementAtMethod = index.getMember('dart:ffi', 'Pointer', 'elementAt'),
-        addressOfField = index.getMember('dart:ffi', 'Struct', 'addressOf'),
+        addressOfField = index.getMember('dart:ffi', 'Struct', '_addressOf'),
         structFromPointer =
-            index.getMember('dart:ffi', 'Struct', 'fromPointer'),
+            index.getMember('dart:ffi', 'Struct', '_fromPointer'),
         asFunctionMethod = index.getMember('dart:ffi', 'Pointer', 'asFunction'),
         asFunctionInternal =
             index.getTopLevelMember('dart:ffi', '_asFunctionInternal'),
@@ -303,10 +301,10 @@ class FfiTransformer extends Transformer {
     }
     if (kNativeTypeIntStart.index <= nativeType_.index &&
         nativeType_.index <= kNativeTypeIntEnd.index) {
-      return InterfaceType(intClass);
+      return InterfaceType(intClass, Nullability.legacy);
     }
     if (nativeType_ == NativeType.kFloat || nativeType_ == NativeType.kDouble) {
-      return InterfaceType(doubleClass);
+      return InterfaceType(doubleClass, Nullability.legacy);
     }
     if (nativeType_ == NativeType.kVoid) {
       return VoidType();
@@ -330,7 +328,7 @@ class FfiTransformer extends Transformer {
         .map((t) => convertNativeTypeToDartType(t, /*allowStructs=*/ false))
         .toList();
     if (argumentTypes.contains(null)) return null;
-    return FunctionType(argumentTypes, returnType);
+    return FunctionType(argumentTypes, returnType, Nullability.legacy);
   }
 
   NativeType getType(Class c) {

@@ -15,17 +15,46 @@ main() {
 
 @reflectiveTest
 class NonNativeFunctionTypeArgumentToPointerTest extends DriverResolutionTest {
-  test_asFunction() async {
+  test_asFunction_1() async {
     await assertErrorsInCode(r'''
 import 'dart:ffi';
-typedef R = int Function(int);
+typedef R = Int8 Function(Int8);
 class C {
   void f(Pointer<Double> p) {
     p.asFunction<R>();
   }
 }
 ''', [
-      error(FfiCode.NON_NATIVE_FUNCTION_TYPE_ARGUMENT_TO_POINTER, 94, 1),
+      error(FfiCode.NON_NATIVE_FUNCTION_TYPE_ARGUMENT_TO_POINTER, 109, 1),
+    ]);
+  }
+
+  test_asFunction_2() async {
+    await assertErrorsInCode(r'''
+import 'dart:ffi';
+typedef TPrime = int Function(int);
+typedef F = String Function(String);
+class C {
+  void f(Pointer<NativeFunction<TPrime>> p) {
+    p.asFunction<F>();
+  }
+}
+''', [
+      error(FfiCode.NON_NATIVE_FUNCTION_TYPE_ARGUMENT_TO_POINTER, 165, 1),
+    ]);
+  }
+
+  test_asFunction_F() async {
+    await assertErrorsInCode(r'''
+import 'dart:ffi';
+typedef R = int Function(int);
+class C<T extends Function> {
+  void f(Pointer<NativeFunction<T>> p) {
+    p.asFunction<R>();
+  }
+}
+''', [
+      error(FfiCode.NON_NATIVE_FUNCTION_TYPE_ARGUMENT_TO_POINTER, 138, 1),
     ]);
   }
 }

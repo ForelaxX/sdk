@@ -141,12 +141,9 @@ Location LocationAnyOrConstant(Value* value) {
              : Location::Any();
 }
 
-// DBC does not have an notion of 'address' in its instruction set.
-#if !defined(TARGET_ARCH_DBC)
 compiler::Address LocationToStackSlotAddress(Location loc) {
   return compiler::Address(loc.base_reg(), loc.ToStackSlotOffset());
 }
-#endif
 
 template <class Register, class FpuRegister>
 intptr_t TemplateLocation<Register, FpuRegister>::ToStackSlotOffset() const {
@@ -189,19 +186,6 @@ const char* TemplateLocation<Register, FpuRegister>::Name() const {
           return "0";
       }
       UNREACHABLE();
-#if TARGET_ARCH_DBC
-    case kSpecialDbcRegister:
-      switch (payload()) {
-        case kArgsDescriptorReg:
-          return "ArgDescReg";
-        case kExceptionReg:
-          return "ExceptionReg";
-        case kStackTraceReg:
-          return "StackTraceReg";
-        default:
-          UNREACHABLE();
-      }
-#endif
     default:
       if (IsConstant()) {
         return "C";
@@ -269,27 +253,15 @@ TemplateLocation<Register, FpuRegister>::Copy() const {
 }
 
 Location LocationArgumentsDescriptorLocation() {
-#ifdef TARGET_ARCH_DBC
-  return Location(Location::kSpecialDbcRegister, Location::kArgsDescriptorReg);
-#else
   return Location::RegisterLocation(ARGS_DESC_REG);
-#endif
 }
 
 Location LocationExceptionLocation() {
-#ifdef TARGET_ARCH_DBC
-  return Location(Location::kSpecialDbcRegister, Location::kExceptionReg);
-#else
   return Location::RegisterLocation(kExceptionObjectReg);
-#endif
 }
 
 Location LocationStackTraceLocation() {
-#ifdef TARGET_ARCH_DBC
-  return Location(Location::kSpecialDbcRegister, Location::kStackTraceReg);
-#else
   return Location::RegisterLocation(kStackTraceObjectReg);
-#endif
 }
 
 Location LocationRemapForSlowPath(Location loc,
@@ -306,7 +278,8 @@ Location LocationRemapForSlowPath(Location loc,
     intptr_t index = fpu_reg_slots[loc.fpu_reg()];
     ASSERT(index >= 0);
     switch (def->representation()) {
-      case kUnboxedDouble:
+      case kUnboxedDouble:  // SlowPathEnvironmentFor sees _one_ register
+      case kUnboxedFloat:   // both for doubles and floats.
         return Location::DoubleStackSlot(
             compiler::target::frame_layout.FrameSlotForVariableIndex(-index),
             FPREG);

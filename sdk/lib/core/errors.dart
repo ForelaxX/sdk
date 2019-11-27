@@ -2,6 +2,8 @@
 // for details. All rights reserved. Use of this source code is governed by a
 // BSD-style license that can be found in the LICENSE file.
 
+// @dart = 2.6
+
 part of dart.core;
 
 /**
@@ -586,3 +588,8 @@ class CyclicInitializationError extends Error {
       ? "Reading static variable during its initialization"
       : "Reading static variable '$variableName' during its initialization";
 }
+
+/**
+ * Error thrown when a late field is set or get when it shouldn't be.
+ */
+class LateInitializationError extends Error {}

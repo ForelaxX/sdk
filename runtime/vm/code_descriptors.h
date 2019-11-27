@@ -30,7 +30,8 @@ class DescriptorList : public ZoneAllocated {
                      intptr_t pc_offset,
                      intptr_t deopt_id,
                      TokenPosition token_pos,
-                     intptr_t try_index);
+                     intptr_t try_index,
+                     intptr_t yield_index);
 
   RawPcDescriptors* FinalizePcDescriptors(uword entry_point);
 
@@ -44,32 +45,95 @@ class DescriptorList : public ZoneAllocated {
   DISALLOW_COPY_AND_ASSIGN(DescriptorList);
 };
 
-class StackMapTableBuilder : public ZoneAllocated {
+class CompressedStackMapsBuilder : public ZoneAllocated {
  public:
-  StackMapTableBuilder()
-      : pc_offset_(Smi::ZoneHandle()),
-        stack_map_(StackMap::ZoneHandle()),
-        list_(GrowableObjectArray::ZoneHandle(
-            GrowableObjectArray::New(Heap::kOld))) {}
-  ~StackMapTableBuilder() {}
+  CompressedStackMapsBuilder() : encoded_bytes_() {}
+
+  static void EncodeLEB128(GrowableArray<uint8_t>* data, uintptr_t value);
 
   void AddEntry(intptr_t pc_offset,
                 BitmapBuilder* bitmap,
-                intptr_t register_bit_count);
+                intptr_t spill_slot_bit_count);
 
-  bool Verify();
-
-  RawArray* FinalizeStackMaps(const Code& code);
+  RawCompressedStackMaps* Finalize() const;
 
  private:
-  intptr_t Length() const { return list_.Length() / 2; }
-  RawSmi* OffsetAt(intptr_t index) const;
-  RawStackMap* MapAt(intptr_t index) const;
+  intptr_t last_pc_offset_ = 0;
+  GrowableArray<uint8_t> encoded_bytes_;
+  DISALLOW_COPY_AND_ASSIGN(CompressedStackMapsBuilder);
+};
 
-  Smi& pc_offset_;
-  StackMap& stack_map_;
-  GrowableObjectArray& list_;
-  DISALLOW_COPY_AND_ASSIGN(StackMapTableBuilder);
+class CompressedStackMapsIterator : public ValueObject {
+ public:
+  // We use the null value to represent CompressedStackMaps with no
+  // entries, so the constructor allows them.
+  CompressedStackMapsIterator(const CompressedStackMaps& maps,
+                              const CompressedStackMaps& global_table)
+      : maps_(maps),
+        bits_container_(maps_.UsesGlobalTable() ? global_table : maps_) {
+    ASSERT(!maps_.IsGlobalTable());
+    ASSERT(!maps_.UsesGlobalTable() || bits_container_.IsGlobalTable());
+  }
+
+  explicit CompressedStackMapsIterator(const CompressedStackMaps& maps)
+      : CompressedStackMapsIterator(maps, CompressedStackMaps::Handle()) {}
+
+  // Loads the next entry from [maps_], if any. If [maps_] is the null
+  // value, this always returns false.
+  bool MoveNext();
+
+  // Finds the entry with the given PC offset starting at the current
+  // position of the iterator. If [maps_] is the null value, this always
+  // returns false.
+  bool Find(uint32_t pc_offset) {
+    // We should never have an entry with a PC offset of 0 inside an
+    // non-empty CSM, so fail.
+    if (pc_offset == 0) return false;
+    do {
+      if (current_pc_offset_ >= pc_offset) break;
+    } while (MoveNext());
+    return current_pc_offset_ == pc_offset;
+  }
+
+  // Methods for accessing parts of an entry should not be called until
+  // a successful MoveNext() or Find() call has been made.
+
+  uint32_t pc_offset() const {
+    ASSERT(HasLoadedEntry());
+    return current_pc_offset_;
+  }
+  // We lazily load and cache information from the global table if the
+  // CSM uses it, so these methods cannot be const.
+  intptr_t Length();
+  intptr_t SpillSlotBitCount();
+  bool IsObject(intptr_t bit_offset);
+
+  void EnsureFullyLoadedEntry() {
+    ASSERT(HasLoadedEntry());
+    if (current_spill_slot_bit_count_ < 0) {
+      LazyLoadGlobalTableEntry();
+    }
+    ASSERT(current_spill_slot_bit_count_ >= 0);
+  }
+
+ private:
+  static uintptr_t DecodeLEB128(const CompressedStackMaps& data,
+                                uintptr_t* byte_index);
+  bool HasLoadedEntry() const { return next_offset_ > 0; }
+  void LazyLoadGlobalTableEntry();
+
+  const CompressedStackMaps& maps_;
+  const CompressedStackMaps& bits_container_;
+
+  uintptr_t next_offset_ = 0;
+  uint32_t current_pc_offset_ = 0;
+  // Only used when looking up non-PC information in the global table.
+  uintptr_t current_global_table_offset_ = 0;
+  intptr_t current_spill_slot_bit_count_ = -1;
+  intptr_t current_non_spill_slot_bit_count_ = -1;
+  intptr_t current_bits_offset_ = -1;
+
+  friend class StackMapEntry;
 };
 
 class ExceptionHandlerList : public ZoneAllocated {

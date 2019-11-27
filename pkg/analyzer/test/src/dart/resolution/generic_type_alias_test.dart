@@ -128,6 +128,21 @@ void f() {
     ]);
   }
 
+  test_missingGenericFunction_imported_withPrefix() async {
+    newFile('/test/lib/a.dart', content: r'''
+typedef F<T> = ;
+''');
+    await assertErrorsInCode(r'''
+import 'a.dart' as p;
+
+void f() {
+  p.F.a;
+}
+''', [
+      error(StaticTypeWarningCode.UNDEFINED_GETTER, 40, 1),
+    ]);
+  }
+
   test_type_element() async {
     await resolveTestCode(r'''
 G<int> g;
@@ -137,7 +152,7 @@ typedef G<T> = T Function(double);
     FunctionType type = findElement.topVar('g').type;
     assertElementTypeString(type, 'int Function(double)');
 
-    var typedefG = findElement.genericTypeAlias('G');
+    var typedefG = findElement.functionTypeAlias('G');
     var functionG = typedefG.function;
 
     expect(type.element, functionG);
@@ -154,7 +169,7 @@ class B {}
 
 typedef F<T extends A> = B<T> Function<U extends B>(T a, U b);
 ''');
-    var f = findElement.genericTypeAlias('F');
+    var f = findElement.functionTypeAlias('F');
     expect(f.typeParameters, hasLength(1));
 
     var t = f.typeParameters[0];

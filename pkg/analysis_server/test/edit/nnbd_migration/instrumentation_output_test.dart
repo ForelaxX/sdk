@@ -23,10 +23,10 @@ class InstrumentationRendererTest extends AbstractAnalysisTest {
   // TODO(srawlins): Add tests for navigation links, which use multiple
   // libraries.
   List<String> renderLibrary(LibraryInfo libraryInfo) {
-    String packageRoot = resourceProvider.convertPath('/package');
-    String outputDir = resourceProvider.convertPath('/output');
+    String packageRoot = convertPath('/package');
+    String outputDir = convertPath('/output');
     MigrationInfo migrationInfo = MigrationInfo(
-        libraryInfo.units, resourceProvider.pathContext, packageRoot);
+        libraryInfo.units, {}, resourceProvider.pathContext, packageRoot);
     List<String> contents = [];
     for (UnitInfo unitInfo in libraryInfo.units) {
       contents.add(InstrumentationRenderer(unitInfo, migrationInfo,
@@ -37,58 +37,59 @@ class InstrumentationRendererTest extends AbstractAnalysisTest {
   }
 
   test_outputContainsEachPath() async {
-    LibraryInfo info = LibraryInfo([
+    String convert(String path) => path.replaceAll('/', '&#x2F;');
+
+    LibraryInfo info = LibraryInfo({
       unit('/package/lib/a.dart', 'int? a = null;',
-          regions: [RegionInfo(3, 1, 'null was assigned', [])]),
+          regions: [RegionInfo(RegionType.fix, 3, 1, 'null was assigned', [])]),
       unit('/package/lib/part1.dart', 'int? b = null;',
-          regions: [RegionInfo(3, 1, 'null was assigned', [])]),
+          regions: [RegionInfo(RegionType.fix, 3, 1, 'null was assigned', [])]),
       unit('/package/lib/part2.dart', 'int? c = null;',
-          regions: [RegionInfo(3, 1, 'null was assigned', [])]),
-    ]);
+          regions: [RegionInfo(RegionType.fix, 3, 1, 'null was assigned', [])]),
+    });
     List<String> contents = renderLibrary(info);
-    expect(contents[0], contains(resourceProvider.convertPath('lib/a.dart')));
-    expect(
-        contents[1], contains(resourceProvider.convertPath('lib/part1.dart')));
-    expect(
-        contents[2], contains(resourceProvider.convertPath('lib/part2.dart')));
+    expect(contents[0], contains(convert('lib/a.dart')));
+    expect(contents[1], contains(convert('lib/part1.dart')));
+    expect(contents[2], contains(convert('lib/part2.dart')));
   }
 
   test_outputContainsEscapedHtml() async {
-    LibraryInfo info = LibraryInfo([
-      unit('/package/lib/a.dart', 'List<String>? a = null;',
-          regions: [RegionInfo(12, 1, 'null was assigned', [])]),
-    ]);
+    LibraryInfo info = LibraryInfo({
+      unit('/package/lib/a.dart', 'List<String>? a = null;', regions: [
+        RegionInfo(RegionType.fix, 12, 1, 'null was assigned', [])
+      ]),
+    });
     String output = renderLibrary(info)[0];
     expect(
         output,
-        contains('List&lt;String&gt;<span class="region">?'
+        contains('List&lt;String&gt;<span class="region fix-region">?'
             '<span class="tooltip"><p>null was assigned</p>'
-            '  <ul>      </ul></span></span> a = null;'));
+            '</span></span> a = null;'));
   }
 
   test_outputContainsEscapedHtml_ampersand() async {
-    LibraryInfo info = LibraryInfo([
+    LibraryInfo info = LibraryInfo({
       unit('/package/lib/a.dart', 'bool a = true && false;', regions: []),
-    ]);
+    });
     String output = renderLibrary(info)[0];
     expect(output, contains('bool a = true &amp;&amp; false;'));
   }
 
   test_outputContainsModifiedAndUnmodifiedRegions() async {
-    LibraryInfo info = LibraryInfo([
+    LibraryInfo info = LibraryInfo({
       unit('/package/lib/a.dart', 'int? a = null;',
-          regions: [RegionInfo(3, 1, 'null was assigned', [])]),
-    ]);
+          regions: [RegionInfo(RegionType.fix, 3, 1, 'null was assigned', [])]),
+    });
     String output = renderLibrary(info)[0];
     expect(
         output,
-        contains('int<span class="region">?'
+        contains('int<span class="region fix-region">?'
             '<span class="tooltip"><p>null was assigned</p>'
-            '  <ul>      </ul></span></span> a = null;'));
+            '</span></span> a = null;'));
   }
 
   UnitInfo unit(String path, String content, {List<RegionInfo> regions}) {
-    return UnitInfo(resourceProvider.convertPath(path))
+    return UnitInfo(convertPath(path))
       ..content = content
       ..regions.addAll(regions);
   }

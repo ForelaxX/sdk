@@ -31,6 +31,11 @@ DEFINE_FLAG(uint64_t,
             ULLONG_MAX,
             "Instruction address or instruction count to stop simulator at.");
 
+DEFINE_FLAG(bool,
+            sim_allow_unaligned_accesses,
+            true,
+            "Allow unaligned accesses to Normal memory.");
+
 // This macro provides a platform independent use of sscanf. The reason for
 // SScanF not being implemented in a platform independent way through
 // OS in the same way as SNPrint is that the Windows C Run-Time
@@ -791,23 +796,20 @@ class Redirection {
                           int argument_count) {
     MutexLocker ml(mutex_);
 
-    for (Redirection* current = list_; current != NULL;
+    Redirection* old_head = list_.load(std::memory_order_relaxed);
+    for (Redirection* current = old_head; current != nullptr;
          current = current->next_) {
       if (current->external_function_ == external_function) return current;
     }
 
     Redirection* redirection =
         new Redirection(external_function, call_kind, argument_count);
-    redirection->next_ = list_;
+    redirection->next_ = old_head;
 
     // Use a memory fence to ensure all pending writes are written at the time
     // of updating the list head, so the profiling thread always has a valid
     // list to look at.
-    Redirection* old_head = list_;
-    Redirection* replaced_list_head =
-        AtomicOperations::CompareAndSwapPointer<Redirection>(&list_, old_head,
-                                                             redirection);
-    ASSERT(old_head == replaced_list_head);
+    list_.store(redirection, std::memory_order_release);
 
     return redirection;
   }
@@ -824,8 +826,8 @@ class Redirection {
   // allowed to hold any locks - which is precisely the reason why the list is
   // prepend-only and a memory fence is used when writing the list head [list_]!
   static uword FunctionForRedirect(uword address_of_hlt) {
-    Redirection* current;
-    for (current = list_; current != NULL; current = current->next_) {
+    for (Redirection* current = list_.load(std::memory_order_acquire);
+         current != nullptr; current = current->next_) {
       if (current->address_of_hlt_instruction() == address_of_hlt) {
         return current->external_function_;
       }
@@ -848,11 +850,11 @@ class Redirection {
   int argument_count_;
   uint32_t hlt_instruction_;
   Redirection* next_;
-  static Redirection* list_;
+  static std::atomic<Redirection*> list_;
   static Mutex* mutex_;
 };
 
-Redirection* Redirection::list_ = NULL;
+std::atomic<Redirection*> Redirection::list_ = {nullptr};
 Mutex* Redirection::mutex_ = new Mutex();
 
 uword Simulator::RedirectExternalReference(uword function,
@@ -999,9 +1001,10 @@ void Simulator::HandleIllegalAccess(uword addr, Instr* instr) {
   FATAL("Cannot continue execution after illegal memory access.");
 }
 
-// The ARMv8 manual advises that an unaligned access may generate a fault,
-// and if not, will likely take a number of additional cycles to execute,
-// so let's just not generate any.
+// ARMv8 supports unaligned memory accesses to normal memory without trapping
+// for all instructions except Load-Exclusive/Store-Exclusive and
+// Load-Acquire/Store-Release.
+// See B2.4.2 "Alignment of data accesses" for more information.
 void Simulator::UnalignedAccess(const char* msg, uword addr, Instr* instr) {
   char buffer[128];
   snprintf(buffer, sizeof(buffer), "unaligned %s at 0x%" Px ", pc=%p\n", msg,
@@ -1027,8 +1030,12 @@ bool Simulator::IsTracingExecution() const {
   return icount_ > FLAG_trace_sim_after;
 }
 
-intptr_t Simulator::ReadX(uword addr, Instr* instr) {
-  if ((addr & 7) == 0) {
+intptr_t Simulator::ReadX(uword addr,
+                          Instr* instr,
+                          bool must_be_aligned /* = false */) {
+  const bool allow_unaligned_access =
+      FLAG_sim_allow_unaligned_accesses && !must_be_aligned;
+  if (allow_unaligned_access || (addr & 7) == 0) {
     intptr_t* ptr = reinterpret_cast<intptr_t*>(addr);
     return *ptr;
   }
@@ -1037,7 +1044,7 @@ intptr_t Simulator::ReadX(uword addr, Instr* instr) {
 }
 
 void Simulator::WriteX(uword addr, intptr_t value, Instr* instr) {
-  if ((addr & 7) == 0) {
+  if (FLAG_sim_allow_unaligned_accesses || (addr & 7) == 0) {
     intptr_t* ptr = reinterpret_cast<intptr_t*>(addr);
     *ptr = value;
     return;
@@ -1045,8 +1052,12 @@ void Simulator::WriteX(uword addr, intptr_t value, Instr* instr) {
   UnalignedAccess("write", addr, instr);
 }
 
-uint32_t Simulator::ReadWU(uword addr, Instr* instr) {
-  if ((addr & 3) == 0) {
+uint32_t Simulator::ReadWU(uword addr,
+                           Instr* instr,
+                           bool must_be_aligned /* = false */) {
+  const bool allow_unaligned_access =
+      FLAG_sim_allow_unaligned_accesses && !must_be_aligned;
+  if (allow_unaligned_access || (addr & 3) == 0) {
     uint32_t* ptr = reinterpret_cast<uint32_t*>(addr);
     return *ptr;
   }
@@ -1055,7 +1066,7 @@ uint32_t Simulator::ReadWU(uword addr, Instr* instr) {
 }
 
 int32_t Simulator::ReadW(uword addr, Instr* instr) {
-  if ((addr & 3) == 0) {
+  if (FLAG_sim_allow_unaligned_accesses || (addr & 3) == 0) {
     int32_t* ptr = reinterpret_cast<int32_t*>(addr);
     return *ptr;
   }
@@ -1064,7 +1075,7 @@ int32_t Simulator::ReadW(uword addr, Instr* instr) {
 }
 
 void Simulator::WriteW(uword addr, uint32_t value, Instr* instr) {
-  if ((addr & 3) == 0) {
+  if (FLAG_sim_allow_unaligned_accesses || (addr & 3) == 0) {
     uint32_t* ptr = reinterpret_cast<uint32_t*>(addr);
     *ptr = value;
     return;
@@ -1073,7 +1084,7 @@ void Simulator::WriteW(uword addr, uint32_t value, Instr* instr) {
 }
 
 uint16_t Simulator::ReadHU(uword addr, Instr* instr) {
-  if ((addr & 1) == 0) {
+  if (FLAG_sim_allow_unaligned_accesses || (addr & 1) == 0) {
     uint16_t* ptr = reinterpret_cast<uint16_t*>(addr);
     return *ptr;
   }
@@ -1082,7 +1093,7 @@ uint16_t Simulator::ReadHU(uword addr, Instr* instr) {
 }
 
 int16_t Simulator::ReadH(uword addr, Instr* instr) {
-  if ((addr & 1) == 0) {
+  if (FLAG_sim_allow_unaligned_accesses || (addr & 1) == 0) {
     int16_t* ptr = reinterpret_cast<int16_t*>(addr);
     return *ptr;
   }
@@ -1091,7 +1102,7 @@ int16_t Simulator::ReadH(uword addr, Instr* instr) {
 }
 
 void Simulator::WriteH(uword addr, uint16_t value, Instr* instr) {
-  if ((addr & 1) == 0) {
+  if (FLAG_sim_allow_unaligned_accesses || (addr & 1) == 0) {
     uint16_t* ptr = reinterpret_cast<uint16_t*>(addr);
     *ptr = value;
     return;
@@ -1121,13 +1132,13 @@ void Simulator::ClearExclusive() {
 
 intptr_t Simulator::ReadExclusiveX(uword addr, Instr* instr) {
   exclusive_access_addr_ = addr;
-  exclusive_access_value_ = ReadX(addr, instr);
+  exclusive_access_value_ = ReadX(addr, instr, /*must_be_aligned=*/true);
   return exclusive_access_value_;
 }
 
 intptr_t Simulator::ReadExclusiveW(uword addr, Instr* instr) {
   exclusive_access_addr_ = addr;
-  exclusive_access_value_ = ReadWU(addr, instr);
+  exclusive_access_value_ = ReadWU(addr, instr, /*must_be_aligned=*/true);
   return exclusive_access_value_;
 }
 
@@ -1139,11 +1150,11 @@ intptr_t Simulator::WriteExclusiveX(uword addr, intptr_t value, Instr* instr) {
     return 1;  // Failure.
   }
 
-  uword old_value = exclusive_access_value_;
+  int64_t old_value = exclusive_access_value_;
   ClearExclusive();
 
-  if (AtomicOperations::CompareAndSwapWord(reinterpret_cast<uword*>(addr),
-                                           old_value, value) == old_value) {
+  auto atomic_addr = reinterpret_cast<RelaxedAtomic<int64_t>*>(addr);
+  if (atomic_addr->compare_exchange_weak(old_value, value)) {
     return 0;  // Success.
   }
   return 1;  // Failure.
@@ -1157,11 +1168,11 @@ intptr_t Simulator::WriteExclusiveW(uword addr, intptr_t value, Instr* instr) {
     return 1;  // Failure.
   }
 
-  uint32_t old_value = static_cast<uint32_t>(exclusive_access_value_);
+  int32_t old_value = static_cast<uint32_t>(exclusive_access_value_);
   ClearExclusive();
 
-  if (AtomicOperations::CompareAndSwapUint32(reinterpret_cast<uint32_t*>(addr),
-                                             old_value, value) == old_value) {
+  auto atomic_addr = reinterpret_cast<RelaxedAtomic<int32_t>*>(addr);
+  if (atomic_addr->compare_exchange_weak(old_value, value)) {
     return 0;  // Success.
   }
   return 1;  // Failure.

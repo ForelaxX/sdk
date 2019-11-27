@@ -7,10 +7,10 @@ import 'package:analyzer/dart/analysis/features.dart';
 import 'package:analyzer/dart/ast/ast.dart';
 import 'package:analyzer/dart/ast/visitor.dart';
 import 'package:analyzer/dart/element/element.dart';
-import 'package:analyzer/dart/element/nullability_suffix.dart';
 import 'package:analyzer/error/error.dart';
 import 'package:analyzer/error/listener.dart';
 import 'package:analyzer/file_system/file_system.dart';
+import 'package:analyzer/src/context/builder.dart';
 import 'package:analyzer/src/dart/analysis/file_state.dart';
 import 'package:analyzer/src/dart/analysis/testing_data.dart';
 import 'package:analyzer/src/dart/ast/ast.dart';
@@ -41,6 +41,7 @@ import 'package:analyzer/src/lint/linter_visitor.dart';
 import 'package:analyzer/src/services/lint.dart';
 import 'package:analyzer/src/summary2/linked_element_factory.dart';
 import 'package:analyzer/src/task/strong/checker.dart';
+import 'package:analyzer/src/workspace/workspace.dart';
 import 'package:pub_semver/pub_semver.dart';
 
 var timerLibraryAnalyzer = Stopwatch();
@@ -68,9 +69,7 @@ class LibraryAnalyzer {
   final bool Function(Uri) _isLibraryUri;
   final AnalysisContext _context;
   final LinkedElementFactory _elementFactory;
-  TypeProviderImpl _typeProvider;
 
-  final TypeSystem _typeSystem;
   LibraryElement _libraryElement;
 
   LibraryScope _libraryScope;
@@ -103,8 +102,11 @@ class LibraryAnalyzer {
       this._library,
       this._resourceProvider,
       {TestingData testingData})
-      : _typeSystem = _context.typeSystem,
-        _testingData = testingData;
+      : _testingData = testingData;
+
+  TypeProviderImpl get _typeProvider => _libraryElement.typeProvider;
+
+  TypeSystemImpl get _typeSystem => _libraryElement.typeSystem;
 
   /**
    * Compute analysis results for all units of the library.
@@ -131,12 +133,6 @@ class LibraryAnalyzer {
 
     // Resolve URIs in directives to corresponding sources.
     FeatureSet featureSet = units[_library].featureSet;
-    _typeProvider = _context.typeProvider;
-    if (featureSet.isEnabled(Feature.non_nullable)) {
-      _typeProvider = _typeProvider.withNullability(NullabilitySuffix.none);
-    } else {
-      _typeProvider = _typeProvider.withNullability(NullabilitySuffix.star);
-    }
     units.forEach((file, unit) {
       _validateFeatureSet(unit, featureSet);
       _resolveUriBasedDirectives(file, unit);
@@ -243,7 +239,7 @@ class LibraryAnalyzer {
    * Compute [_constants] in all units.
    */
   void _computeConstants() {
-    computeConstants(_typeProvider, _context.typeSystem, _declaredVariables,
+    computeConstants(_typeProvider, _typeSystem, _declaredVariables,
         _constants.toList(), _analysisOptions.experimentStatus);
   }
 
@@ -256,7 +252,7 @@ class LibraryAnalyzer {
     ErrorReporter errorReporter = _getErrorReporter(file);
 
     unit.accept(new DeadCodeVerifier(errorReporter, unit.featureSet,
-        typeSystem: _context.typeSystem));
+        typeSystem: _typeSystem));
 
     // Dart2js analysis.
     if (_analysisOptions.dart2jsHint) {
@@ -265,7 +261,7 @@ class LibraryAnalyzer {
 
     unit.accept(new BestPracticesVerifier(
         errorReporter, _typeProvider, _libraryElement, unit, file.content,
-        typeSystem: _context.typeSystem,
+        typeSystem: _typeSystem,
         inheritanceManager: _inheritance,
         resourceProvider: _resourceProvider,
         analysisOptions: _context.analysisOptions));
@@ -293,8 +289,8 @@ class LibraryAnalyzer {
     {
       UsedLocalElements usedElements =
           new UsedLocalElements.merge(_usedLocalElementsList);
-      UnusedLocalElementsVerifier visitor =
-          new UnusedLocalElementsVerifier(errorListener, usedElements);
+      UnusedLocalElementsVerifier visitor = new UnusedLocalElementsVerifier(
+          errorListener, usedElements, _inheritance, _libraryElement);
       unit.accept(visitor);
     }
 
@@ -308,11 +304,6 @@ class LibraryAnalyzer {
           errorReporter, _libraryElement, _typeProvider, sdkVersionConstraint);
       unit.accept(verifier);
     }
-
-    // Verify constraints on FFI uses. The CFE enforces these constraints as
-    // compile-time errors. However, since the FFI constraints are not
-    // technically part of the Dart language, we surface them as hints.
-    unit.accept(FfiVerifier(_typeSystem, errorReporter));
   }
 
   void _computeLints(FileState file, LinterContextUnit currentUnit,
@@ -326,8 +317,19 @@ class LibraryAnalyzer {
 
     var nodeRegistry = new NodeLintRegistry(_analysisOptions.enableTiming);
     var visitors = <AstVisitor>[];
-    var context = LinterContextImpl(allUnits, currentUnit, _declaredVariables,
-        _typeProvider, _typeSystem, _inheritance, _analysisOptions);
+
+    final workspacePackage = _getPackage(currentUnit.unit);
+
+    var context = LinterContextImpl(
+      allUnits,
+      currentUnit,
+      _declaredVariables,
+      _typeProvider,
+      _typeSystem,
+      _inheritance,
+      _analysisOptions,
+      workspacePackage,
+    );
     for (Linter linter in _analysisOptions.lintRules) {
       linter.reporter = errorReporter;
       if (linter is NodeLintRule) {
@@ -365,7 +367,7 @@ class LibraryAnalyzer {
 
     CodeChecker checker = new CodeChecker(
       _typeProvider,
-      _context.typeSystem,
+      _typeSystem,
       _inheritance,
       errorListener,
       _analysisOptions,
@@ -388,7 +390,7 @@ class LibraryAnalyzer {
     // Compute inheritance and override errors.
     //
     var inheritanceOverrideVerifier = new InheritanceOverrideVerifier(
-        _context.typeSystem, _inheritance, errorReporter);
+        _typeSystem, _inheritance, errorReporter);
     inheritanceOverrideVerifier.verifyUnit(unit);
 
     //
@@ -397,6 +399,10 @@ class LibraryAnalyzer {
     ErrorVerifier errorVerifier = new ErrorVerifier(
         errorReporter, _libraryElement, _typeProvider, _inheritance, false);
     unit.accept(errorVerifier);
+
+    // Verify constraints on FFI uses. The CFE enforces these constraints as
+    // compile-time errors and so does the analyzer.
+    unit.accept(FfiVerifier(_typeSystem, errorReporter));
   }
 
   /**
@@ -418,8 +424,17 @@ class LibraryAnalyzer {
 
     bool isIgnored(AnalysisError error) {
       int errorLine = lineInfo.getLocation(error.offset).lineNumber;
-      String errorCode = error.errorCode.name.toLowerCase();
-      return ignoreInfo.ignoredAt(errorCode, errorLine);
+      String name = error.errorCode.name.toLowerCase();
+      if (ignoreInfo.ignoredAt(name, errorLine)) {
+        return true;
+      }
+      String uniqueName = error.errorCode.uniqueName;
+      int period = uniqueName.indexOf('.');
+      if (period >= 0) {
+        uniqueName = uniqueName.substring(period + 1);
+      }
+      return uniqueName != name &&
+          ignoreInfo.ignoredAt(uniqueName.toLowerCase(), errorLine);
     }
 
     return errors.where((AnalysisError e) => !isIgnored(e)).toList();
@@ -445,6 +460,23 @@ class LibraryAnalyzer {
       RecordingErrorListener listener = _getErrorListener(file);
       return new ErrorReporter(listener, file.source);
     });
+  }
+
+  WorkspacePackage _getPackage(CompilationUnit unit) {
+    final libraryPath = _library.source.fullName;
+    Workspace workspace =
+        unit.declaredElement.session?.analysisContext?.workspace;
+
+    // If there is no driver setup (as in test environments), we need to create
+    // a workspace ourselves.
+    // todo (pq): fix tests or otherwise de-dup this logic shared w/ resolver.
+    if (workspace == null) {
+      final builder = ContextBuilder(
+          _resourceProvider, null /* sdkManager */, null /* contentCache */);
+      workspace = ContextBuilder.createWorkspace(
+          _resourceProvider, libraryPath, builder);
+    }
+    return workspace?.findPackageFor(libraryPath);
   }
 
   /**
@@ -672,9 +704,9 @@ class LibraryAnalyzer {
     FlowAnalysisHelper flowAnalysisHelper;
     if (unit.featureSet.isEnabled(Feature.non_nullable)) {
       flowAnalysisHelper =
-          FlowAnalysisHelper(_context.typeSystem, _testingData != null);
-      _testingData?.recordFlowAnalysisResult(
-          file.uri, flowAnalysisHelper.result);
+          FlowAnalysisHelper(_typeSystem, _testingData != null);
+      _testingData?.recordFlowAnalysisDataForTesting(
+          file.uri, flowAnalysisHelper.dataForTesting);
     }
 
     unit.accept(new ResolverVisitor(

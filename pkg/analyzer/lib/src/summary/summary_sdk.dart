@@ -26,7 +26,7 @@ class SummaryBasedDartSdk implements DartSdk {
   /**
    * The [AnalysisContext] which is used for all of the sources in this sdk.
    */
-  InternalAnalysisContext _analysisContext;
+  SdkAnalysisContext _analysisContext;
 
   SummaryBasedDartSdk(String summaryPath, bool _, {this.resourceProvider}) {
     _dataStore = new SummaryDataStore(<String>[summaryPath],
@@ -51,11 +51,13 @@ class SummaryBasedDartSdk implements DartSdk {
   @override
   AnalysisContext get context {
     if (_analysisContext == null) {
-      AnalysisOptionsImpl analysisOptions = new AnalysisOptionsImpl();
-      _analysisContext = new SdkAnalysisContext(analysisOptions);
-      SourceFactory factory = new SourceFactory(
-          [new DartUriResolver(this)], null, resourceProvider);
-      _analysisContext.sourceFactory = factory;
+      var analysisOptions = AnalysisOptionsImpl();
+      var factory = SourceFactory(
+        [DartUriResolver(this)],
+        null,
+        resourceProvider,
+      );
+      _analysisContext = new SdkAnalysisContext(analysisOptions, factory);
     }
     return _analysisContext;
   }

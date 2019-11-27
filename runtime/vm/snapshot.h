@@ -50,6 +50,7 @@ class RawClass;
 class RawClosure;
 class RawClosureData;
 class RawCodeSourceMap;
+class RawCompressedStackMaps;
 class RawContext;
 class RawContextScope;
 class RawDouble;
@@ -85,7 +86,6 @@ class RawScript;
 class RawSignatureData;
 class RawSendPort;
 class RawSmi;
-class RawStackMap;
 class RawStackTrace;
 class RawSubtypeTestCache;
 class RawTwoByteString;
@@ -199,7 +199,7 @@ class Snapshot {
     if (!IncludesCode(kind())) {
       return NULL;
     }
-    uword offset = Utils::RoundUp(length(), OS::kMaxPreferredCodeAlignment);
+    uword offset = Utils::RoundUp(length(), kMaxObjectAlignment);
     return Addr() + offset;
   }
 

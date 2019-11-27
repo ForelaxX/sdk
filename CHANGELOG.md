@@ -4,9 +4,86 @@
 
 ### Language
 
-*   [Static extension members][]: A new language feature allowing
-    specially declared static functions to be invoked
-    like instance members on expressions of appropriate static types.
+* **Breaking Change**: [Static extension members][] are accessible when
+imported with a prefix (issue [671][]). In the extension method **preview**
+launch, importing a library with a prefix hid all extension members in
+addition to hiding the extension name, thereby making them inaccessible
+in the importing library except via the explicit override syntax. Based
+on user feedback, we have changed this to make extensions methods accessible
+even when imported with a prefix.
+
+    ```dart
+      // "thing.dart"
+      class Thing {
+      }
+      extension Show on Thing {
+        void show() {
+          print("This is a thing");
+        }
+     }
+     // "client.dart"
+     import "thing.dart" as p;
+     void test() {
+       p.Thing().show(); // Previously an error, now resolves to Show.show
+     }
+    ```
+
+[Static extension members]: https://github.com/dart-lang/language/blob/master/accepted/2.6/static-extension-members/feature-specification.md
+[671]: https://github.com/dart-lang/language/issues/671
+
+### Core libraries
+
+#### `dart:io`
+
+* **Breaking change**: Added `IOOverrides.serverSocketBind` to aid in writing
+  tests that wish to mock `ServerSocket.bind`.
+
+### Dart VM
+
+* New fields added to existing instances by a reload will now be initialized
+lazily, as if the field was a late field. This makes the initialization order
+program-defined, whereas previously it was undefined.
+
+### Tools
+
+#### Linter
+
+The Linter was updated to `0.1.104`, which includes:
+
+* updated `unnecessary_overrides` to allow overrides when annotations (besides `@override` are specified)
+* updated `file_names` to allow names w/ leading `_`'s (and improved performance)
+* new lint: `unnecessary_final`
+
+#### Pub
+
+* `pub get` generates [`.dart_tool/package_config.json`](https://github.com/dart-lang/language/blob/62c036cc41b10fb543102d2f73ee132d1e2b2a0e/accepted/future-releases/language-versioning/package-config-file-v2.md)
+  in addition to `.packages` to support language versioning.
+
+* `pub publish` now warns about the old flutter plugin registration format.
+
+* `pub publish` now warns about the `author` field in pubspec.yaml being.
+  obsolete.
+
+* Show a proper error message when `git` is not installed.
+
+## 2.6.1 - 2019-11-11
+
+This is a patch release that reduces dart2js memory usage (issue [27883][]),
+improves stability on arm64 (issue [39090][]) and updates the Dart FFI
+documentation.
+
+[27883]: https://github.com/dart-lang/sdk/issues/27883
+[39090]: https://github.com/dart-lang/sdk/issues/39090
+
+## 2.6.0 - 2019-11-05
+
+### Language
+
+*   **[IN PREVIEW]** [Static extension members][]: A new language feature
+    allowing specially declared static functions to be invoked
+    like instance members on expressions of appropriate static types
+    is available in preview.
+
     Static extension members are declared using a new `extension`
     declaration. Example:
     ```dart
@@ -80,10 +157,36 @@ main() { foo(() {}); }
 * Added optional `parent` parameter to `TimelineTask` constructor to allow for
   linking of asynchronous timeline events in the DevTools timeline view.
 
+#### `dart:io`
+
+* Added `enableTimelineLogging` property to `HttpClient` which, when enabled,
+  will post HTTP connection and request information to the developer timeline
+  for all `HttpClient` instances.
+
 ### Dart VM
 
 * Added a new tool for AOT compiling Dart programs to native, self-contained
 executables. See https://dart.dev/tools/dart2native for additional details.
+
+### Foreign Function Interface (`dart:ffi`)
+
+*   **Breaking change**: The API now makes use of static extension members.
+    Static extension members enable the `dart:ffi` API to be more precise with
+    types, and provide convenient access to memory through extension getters and
+    setters. The extension members on `Pointer` provide `.value` and `.value =`
+    for accessing the value in native memory and `[]` and `[]=` for indexed access.
+    The method `asExternalTypedData` has been replaced with `asTypedList` extension
+    methods. And finally, `Structs` do no longer have a type argument and are
+    accessed using the extension member `.ref` on `Pointer`.
+    These changes makes the code using `dart:ffi` much more concise.
+*   **Breaking change**: The memory management has been removed (`Pointer.allocate`
+    and `Pointer.free`). Instead, memory management is available in
+    [package:ffi](https://pub.dev/packages/ffi).
+*   **Breaking change**: `Pointer.offsetBy` was removed, use `cast` and `elementAt`
+    instead.
+*   Faster memory load and stores.
+*   The dartanalyzer (commandline and IDEs) now reports `dart:ffi` static errors.
+*   Callbacks are now supported in AOT (ahead-of-time) compiled code.
 
 ### Dart for the Web
 
@@ -94,8 +197,6 @@ executables. See https://dart.dev/tools/dart2native for additional details.
 
 ### Tools
 
-#### Pub
-
 #### Linter
 
 The Linter was updated to `0.1.101`, which includes:
@@ -105,7 +206,6 @@ The Linter was updated to `0.1.101`, which includes:
 * fixed `avoid_print` to catch tear-off usage
 * new lint: `avoid_web_libraries_in_flutter` (experimental)
 * (internal) prepare `unnecessary_lambdas` for coming `MethodInvocation` vs. `FunctionExpressionInvocation` changes
-
 
 ## 2.5.1 - 2019-09-27
 

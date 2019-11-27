@@ -76,15 +76,6 @@ class FfiCode extends AnalyzerErrorCode {
       correction: "Try using 'int', 'double' or 'Pointer'.");
 
   /**
-   * Parameters:
-   * 0: the name of the subclass
-   */
-  static const FfiCode INVALID_TYPE_ARGUMENT_FOR_STRUCT = const FfiCode(
-      name: 'INVALID_TYPE_ARGUMENT_FOR_STRUCT',
-      message: "The type argument to 'Struct' must be the subclass ('{0}').",
-      correction: "Try using '{0}' for the type argument.");
-
-  /**
    * No parameters.
    */
   static const FfiCode MISMATCHED_ANNOTATION_ON_STRUCT_FIELD = const FfiCode(
@@ -127,14 +118,15 @@ class FfiCode extends AnalyzerErrorCode {
 
   /**
    * Parameters:
-   * 0: the name of the subclass
+   * 0: the type that should be a valid dart:ffi native type.
+   * 1: the name of the function whose invocation depends on this relationship
    */
-  static const FfiCode MISSING_TYPE_ARGUMENT_FOR_STRUCT = const FfiCode(
-      name: 'MISSING_TYPE_ARGUMENT_FOR_STRUCT',
+  static const FfiCode MUST_BE_A_NATIVE_FUNCTION_TYPE = const FfiCode(
+      name: 'MUST_BE_A_NATIVE_FUNCTION_TYPE',
       message:
-          "The type 'Struct' must have a type argument matching the subclass "
-          "('{0}').",
-      correction: "Try adding a type argument of '{0}'.");
+          "The type '{0}' given to '{1}' must be a valid 'dart:ffi' native "
+          "function type.",
+      correction: "Try changing the type to only use members for 'dart:ffi'.");
 
   /**
    * Parameters:
@@ -149,7 +141,7 @@ class FfiCode extends AnalyzerErrorCode {
 
   /**
    * Parameters:
-   * 0: the name of the function, method, or constructor having type arguments 
+   * 0: the name of the function, method, or constructor having type arguments
    */
   static const FfiCode NON_CONSTANT_TYPE_ARGUMENT = const FfiCode(
       name: 'NON_CONSTANT_TYPE_ARGUMENT',
@@ -159,24 +151,14 @@ class FfiCode extends AnalyzerErrorCode {
       correction: "Try changing the type argument to be a constant type.");
 
   /**
-   * No parameters.
-   */
-  static const FfiCode NON_CONSTANT_TYPE_ARGUMENT_TO_POINTER = const FfiCode(
-      name: 'NON_CONSTANT_TYPE_ARGUMENT_TO_POINTER',
-      message:
-          "The type argument for the pointer must be a compile time constant "
-          "but type parameters are not constants.",
-      correction: "Try changing the type argument to be a constant type.");
-
-  /**
-   * No parameters.
+   * Parameters:
+   * 0: the type that should be a valid dart:ffi native type.
    */
   static const FfiCode NON_NATIVE_FUNCTION_TYPE_ARGUMENT_TO_POINTER =
       const FfiCode(
           name: 'NON_NATIVE_FUNCTION_TYPE_ARGUMENT_TO_POINTER',
-          message:
-              "The type argument for the pointer must be a 'NativeFunction' in "
-              "order to use 'asFunction'.",
+          message: "The type argument for the pointer '{0}' must be a "
+              "'NativeFunction' in order to use 'asFunction'.",
           correction:
               "Try changing the type argument to be a 'NativeFunction'.");
 

@@ -2,8 +2,6 @@
 // for details. All rights reserved. Use of this source code is governed by a
 // BSD-style license that can be found in the LICENSE file.
 
-// @dart = 2.5
-
 library dart._js_helper;
 
 import 'dart:collection';
@@ -71,13 +69,13 @@ class SyncIterable<E> extends IterableBase<E> {
 
 class Primitives {
   @NoInline()
-  static int _parseIntError(String source, int handleError(String source)) {
+  static int? _parseIntError(String source, int? handleError(String source)?) {
     if (handleError == null) throw FormatException(source);
     return handleError(source);
   }
 
-  static int parseInt(
-      @nullCheck String source, int _radix, int handleError(String source)) {
+  static int? parseInt(
+      @nullCheck String source, int? _radix, int? handleError(String source)?) {
     var re = JS('', r'/^\s*[+-]?((0x[a-f0-9]+)|(\d+)|([a-z0-9]+))\s*$/i');
     // TODO(jmesserly): this isn't reified List<String>, but it's safe to use as
     // long as we use it locally and don't expose it to user code.
@@ -148,16 +146,16 @@ class Primitives {
   }
 
   @NoInline()
-  static double _parseDoubleError(
-      String source, double handleError(String source)) {
+  static double? _parseDoubleError(
+      String source, double? handleError(String source)?) {
     if (handleError == null) {
       throw FormatException('Invalid double', source);
     }
     return handleError(source);
   }
 
-  static double parseDouble(
-      @nullCheck String source, double handleError(String source)) {
+  static double? parseDouble(
+      @nullCheck String source, double? handleError(String source)?) {
     // Notice that JS parseFloat accepts garbage at the end of the string.
     // Accept only:
     // - [+/-]NaN
@@ -203,7 +201,7 @@ class Primitives {
   }
 
   static int timerFrequency;
-  static num Function() timerTicks;
+  static int Function() timerTicks;
 
   static bool get isD8 {
     return JS(
@@ -268,7 +266,7 @@ class Primitives {
   }
 
   @notNull
-  static String stringFromCharCodes(JSArray<int> charCodes) {
+  static String stringFromCharCodes(List<int> charCodes) {
     for (@nullCheck var i in charCodes) {
       if (i < 0) throw argumentErrorValue(i);
       if (i > 0xffff) return stringFromCodePoints(charCodes);
@@ -362,7 +360,7 @@ class Primitives {
     return -JS<int>('!', r'#.getTimezoneOffset()', lazyAsJsDate(receiver));
   }
 
-  static num valueFromDecomposedDate(
+  static int valueFromDecomposedDate(
       @nullCheck int years,
       @nullCheck int month,
       @nullCheck int day,
@@ -375,10 +373,10 @@ class Primitives {
     var jsMonth = month - 1;
     num value;
     if (isUtc) {
-      value = JS('!', r'Date.UTC(#, #, #, #, #, #, #)', years, jsMonth, day,
-          hours, minutes, seconds, milliseconds);
+      value = JS<int>('!', r'Date.UTC(#, #, #, #, #, #, #)', years, jsMonth,
+          day, hours, minutes, seconds, milliseconds);
     } else {
-      value = JS('!', r'new Date(#, #, #, #, #, #, #).valueOf()', years,
+      value = JS<int>('!', r'new Date(#, #, #, #, #, #, #).valueOf()', years,
           jsMonth, day, hours, minutes, seconds, milliseconds);
     }
     if (value.isNaN ||
@@ -390,14 +388,14 @@ class Primitives {
     return value;
   }
 
-  static num patchUpY2K(value, years, isUtc) {
-    var date = JS('', r'new Date(#)', value);
+  static int patchUpY2K(value, years, isUtc) {
+    var date = JS<int>('!', r'new Date(#)', value);
     if (isUtc) {
-      JS('', r'#.setUTCFullYear(#)', date, years);
+      JS<int>('!', r'#.setUTCFullYear(#)', date, years);
     } else {
-      JS('', r'#.setFullYear(#)', date, years);
+      JS<int>('!', r'#.setFullYear(#)', date, years);
     }
-    return JS('!', r'#.valueOf()', date);
+    return JS<int>('!', r'#.valueOf()', date);
   }
 
   // Lazily keep a JS Date stored in the JS object.

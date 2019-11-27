@@ -370,8 +370,6 @@ namespace dart {
   V(VMService_RequestAssets, 0)                                                \
   V(VMService_DecodeAssets, 1)                                                 \
   V(VMService_spawnUriNotify, 2)                                               \
-  V(Ffi_allocate, 1)                                                           \
-  V(Ffi_free, 1)                                                               \
   V(Ffi_loadInt8, 2)                                                           \
   V(Ffi_loadInt16, 2)                                                          \
   V(Ffi_loadInt32, 2)                                                          \
@@ -487,7 +485,8 @@ class BootstrapNatives : public AllStatic {
   static const uint8_t* Symbol(Dart_NativeFunction* nf);
 
 #define DECLARE_BOOTSTRAP_NATIVE(name, ignored)                                \
-  static void DN_##name(Dart_NativeArguments args);
+  static RawObject* DN_##name(Thread* thread, Zone* zone,                      \
+                              NativeArguments* arguments);
 
   BOOTSTRAP_NATIVE_LIST(DECLARE_BOOTSTRAP_NATIVE)
 #if !defined(DART_PRECOMPILED_RUNTIME)

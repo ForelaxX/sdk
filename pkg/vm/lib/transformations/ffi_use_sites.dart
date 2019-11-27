@@ -14,8 +14,7 @@ import 'package:front_end/src/api_unstable/vm.dart'
         templateFfiExtendsOrImplementsSealedClass,
         templateFfiNotStatic,
         templateFfiTypeInvalid,
-        templateFfiTypeMismatch,
-        templateFfiTypeUnsized;
+        templateFfiTypeMismatch;
 
 import 'package:kernel/ast.dart';
 import 'package:kernel/class_hierarchy.dart' show ClassHierarchy;
@@ -25,13 +24,7 @@ import 'package:kernel/target/targets.dart' show DiagnosticReporter;
 import 'package:kernel/type_environment.dart';
 
 import 'ffi.dart'
-    show
-        ReplacedMembers,
-        NativeType,
-        kNativeTypeIntStart,
-        kNativeTypeIntEnd,
-        FfiTransformer,
-        optimizedTypes;
+    show ReplacedMembers, NativeType, FfiTransformer, optimizedTypes;
 
 /// Checks and replaces calls to dart:ffi struct fields and methods.
 void transformLibraries(
@@ -60,6 +53,7 @@ void transformLibraries(
 class _FfiUseSiteTransformer extends FfiTransformer {
   final Map<Field, Procedure> replacedGetters;
   final Map<Field, Procedure> replacedSetters;
+  StaticTypeContext _staticTypeContext;
 
   Library currentLibrary;
   bool get isFfiLibrary => currentLibrary == ffiLibrary;
@@ -86,7 +80,6 @@ class _FfiUseSiteTransformer extends FfiTransformer {
 
   @override
   visitClass(Class node) {
-    env.thisType = InterfaceType(node);
     try {
       _ensureNotExtendsOrImplementsSealedClass(node);
       return super.visitClass(node);
@@ -95,9 +88,31 @@ class _FfiUseSiteTransformer extends FfiTransformer {
       // cause compilation to fail. By continuing, we can report more
       // diagnostics before compilation ends.
       return super.visitClass(node);
-    } finally {
-      env.thisType = null;
     }
+  }
+
+  @override
+  visitField(Field node) {
+    _staticTypeContext = new StaticTypeContext(node, env);
+    var result = super.visitField(node);
+    _staticTypeContext = null;
+    return result;
+  }
+
+  @override
+  visitConstructor(Constructor node) {
+    _staticTypeContext = new StaticTypeContext(node, env);
+    var result = super.visitConstructor(node);
+    _staticTypeContext = null;
+    return result;
+  }
+
+  @override
+  visitProcedure(Procedure node) {
+    _staticTypeContext = new StaticTypeContext(node, env);
+    var result = super.visitProcedure(node);
+    _staticTypeContext = null;
+    return result;
   }
 
   @override
@@ -132,10 +147,10 @@ class _FfiUseSiteTransformer extends FfiTransformer {
     final Member target = node.target;
     try {
       if (target == fromFunctionMethod) {
-        final DartType nativeType =
-            InterfaceType(nativeFunctionClass, [node.arguments.types[0]]);
+        final DartType nativeType = InterfaceType(
+            nativeFunctionClass, Nullability.legacy, [node.arguments.types[0]]);
         final Expression func = node.arguments.positional[0];
-        final DartType dartType = func.getStaticType(env);
+        final DartType dartType = func.getStaticType(_staticTypeContext);
 
         _ensureIsStaticFunction(func);
 
@@ -154,8 +169,8 @@ class _FfiUseSiteTransformer extends FfiTransformer {
             expectedReturn == NativeType.kPointer) {
           if (node.arguments.positional.length > 1) {
             diagnosticReporter.report(
-                templateFfiExpectedNoExceptionalReturn
-                    .withArguments(funcType.returnType),
+                templateFfiExpectedNoExceptionalReturn.withArguments(
+                    funcType.returnType, currentLibrary.isNonNullableByDefault),
                 node.fileOffset,
                 1,
                 node.location.file);
@@ -167,8 +182,8 @@ class _FfiUseSiteTransformer extends FfiTransformer {
           // types.
           if (node.arguments.positional.length < 2) {
             diagnosticReporter.report(
-                templateFfiExpectedExceptionalReturn
-                    .withArguments(funcType.returnType),
+                templateFfiExpectedExceptionalReturn.withArguments(
+                    funcType.returnType, currentLibrary.isNonNullableByDefault),
                 node.fileOffset,
                 1,
                 node.location.file);
@@ -196,13 +211,14 @@ class _FfiUseSiteTransformer extends FfiTransformer {
             return node;
           }
 
-          final DartType returnType = exceptionalReturn.getStaticType(env);
+          final DartType returnType =
+              exceptionalReturn.getStaticType(_staticTypeContext);
 
           if (!env.isSubtypeOf(returnType, funcType.returnType,
               SubtypeCheckMode.ignoringNullabilities)) {
             diagnosticReporter.report(
-                templateFfiDartTypeMismatch.withArguments(
-                    returnType, funcType.returnType),
+                templateFfiDartTypeMismatch.withArguments(returnType,
+                    funcType.returnType, currentLibrary.isNonNullableByDefault),
                 exceptionalReturn.fileOffset,
                 1,
                 exceptionalReturn.location.file);
@@ -242,7 +258,7 @@ class _FfiUseSiteTransformer extends FfiTransformer {
     final Arguments args = Arguments([
       node.arguments.positional.single
     ], types: [
-      InterfaceType(nativeFunctionClass, [nativeSignature])
+      InterfaceType(nativeFunctionClass, Nullability.legacy, [nativeSignature])
     ]);
 
     final Expression lookupResult = MethodInvocation(
@@ -267,11 +283,12 @@ class _FfiUseSiteTransformer extends FfiTransformer {
   // Creating this closure requires a runtime call, so we save the result in a
   // synthetic top-level field to avoid recomputing it.
   Expression _replaceFromFunction(StaticInvocation node) {
-    final nativeFunctionType =
-        InterfaceType(nativeFunctionClass, node.arguments.types);
+    final nativeFunctionType = InterfaceType(
+        nativeFunctionClass, Nullability.legacy, node.arguments.types);
     final Field field = Field(
         Name("_#ffiCallback${callbackCount++}", currentLibrary),
-        type: InterfaceType(pointerClass, [nativeFunctionType]),
+        type: InterfaceType(
+            pointerClass, Nullability.legacy, [nativeFunctionType]),
         initializer: StaticInvocation(
             pointerFromFunctionProcedure,
             Arguments([
@@ -296,8 +313,8 @@ class _FfiUseSiteTransformer extends FfiTransformer {
       // in 'dynamic_library_patch.dart'. Dynamic invocations of 'asFunction'
       // and 'lookupFunction' are not legal and throw a runtime exception.
       if (target == lookupFunctionMethod) {
-        final DartType nativeType =
-            InterfaceType(nativeFunctionClass, [node.arguments.types[0]]);
+        final DartType nativeType = InterfaceType(
+            nativeFunctionClass, Nullability.legacy, [node.arguments.types[0]]);
         final DartType dartType = node.arguments.types[1];
 
         _ensureNativeTypeValid(nativeType, node);
@@ -305,7 +322,8 @@ class _FfiUseSiteTransformer extends FfiTransformer {
         return _replaceLookupFunction(node);
       } else if (target == asFunctionMethod) {
         final DartType dartType = node.arguments.types[0];
-        final DartType pointerType = node.receiver.getStaticType(env);
+        final DartType pointerType =
+            node.receiver.getStaticType(_staticTypeContext);
         final DartType nativeType = _pointerTypeGetTypeArg(pointerType);
 
         _ensureNativeTypeValid(pointerType, node);
@@ -316,57 +334,11 @@ class _FfiUseSiteTransformer extends FfiTransformer {
             (nativeType as InterfaceType).typeArguments[0];
         return StaticInvocation(asFunctionInternal,
             Arguments([node.receiver], types: [dartType, nativeSignature]));
-      } else if (target == loadMethod) {
-        final DartType dartType = node.arguments.types[0];
-        final DartType pointerType = node.receiver.getStaticType(env);
-        final DartType nativeType = _pointerTypeGetTypeArg(pointerType);
-
-        _ensureNativeTypeValid(pointerType, node);
-        _ensureNativeTypeValid(nativeType, node, allowStructs: true);
-        _ensureNativeTypeSized(nativeType, node, target.name);
-        _ensureNativeTypeToDartType(nativeType, dartType, node,
-            allowStructs: true);
-
-        // TODO(37773): When moving to extension methods we can get rid of
-        // this rewiring.
-        final Class nativeClass = (nativeType as InterfaceType).classNode;
-        final NativeType nt = getType(nativeClass);
-        final typeArguments = [
-          if (nt == NativeType.kPointer) _pointerTypeGetTypeArg(nativeType)
-        ];
-        return StaticInvocation(
-            optimizedTypes.contains(nt) ? loadMethods[nt] : loadStructMethod,
-            Arguments([node.receiver, ConstantExpression(IntConstant(0))],
-                types: typeArguments));
-      } else if (target == storeMethod) {
-        final Expression storeValue = node.arguments.positional.single;
-        final DartType dartType = storeValue.getStaticType(env);
-        final DartType pointerType = node.receiver.getStaticType(env);
-        final DartType nativeType = _pointerTypeGetTypeArg(pointerType);
-
-        // TODO(36730): Allow storing an entire struct to memory.
-        // TODO(36780): Emit a better error message for the struct case.
-        _ensureNativeTypeValid(pointerType, node);
-        _ensureNativeTypeValid(nativeType, node);
-        _ensureNativeTypeSized(nativeType, node, target.name);
-        _ensureNativeTypeToDartType(nativeType, dartType, node);
-
-        // TODO(37773): When moving to extension methods we can get rid of
-        // this rewiring.
-        final Class nativeClass = (nativeType as InterfaceType).classNode;
-        final NativeType nt = getType(nativeClass);
-        final typeArguments = [
-          if (nt == NativeType.kPointer) _pointerTypeGetTypeArg(nativeType)
-        ];
-        return StaticInvocation(
-            storeMethods[nt],
-            Arguments(
-                [node.receiver, ConstantExpression(IntConstant(0)), storeValue],
-                types: typeArguments));
       } else if (target == elementAtMethod) {
         // TODO(37773): When moving to extension methods we can get rid of
         // this rewiring.
-        final DartType pointerType = node.receiver.getStaticType(env);
+        final DartType pointerType =
+            node.receiver.getStaticType(_staticTypeContext);
         final DartType nativeType = _pointerTypeGetTypeArg(pointerType);
         if (nativeType is TypeParameterType) {
           // Do not rewire generic invocations.
@@ -398,17 +370,18 @@ class _FfiUseSiteTransformer extends FfiTransformer {
   }
 
   void _ensureNativeTypeToDartType(
-      DartType containerTypeArg, DartType elementType, Expression node,
+      DartType nativeType, DartType dartType, Expression node,
       {bool allowStructs: false}) {
-    final DartType shouldBeElementType =
-        convertNativeTypeToDartType(containerTypeArg, allowStructs);
-    if (elementType == shouldBeElementType) return;
-    // We disable implicit downcasts, they will go away when NNBD lands.
-    if (env.isSubtypeOf(elementType, shouldBeElementType,
-        SubtypeCheckMode.ignoringNullabilities)) return;
+    final DartType correspondingDartType =
+        convertNativeTypeToDartType(nativeType, allowStructs);
+    if (dartType == correspondingDartType) return;
+    if (env.isSubtypeOf(correspondingDartType, dartType,
+        SubtypeCheckMode.ignoringNullabilities)) {
+      return;
+    }
     diagnosticReporter.report(
-        templateFfiTypeMismatch.withArguments(
-            elementType, shouldBeElementType, containerTypeArg),
+        templateFfiTypeMismatch.withArguments(dartType, correspondingDartType,
+            nativeType, currentLibrary.isNonNullableByDefault),
         node.fileOffset,
         1,
         node.location.file);
@@ -419,7 +392,8 @@ class _FfiUseSiteTransformer extends FfiTransformer {
       {bool allowStructs: false}) {
     if (!_nativeTypeValid(nativeType, allowStructs: allowStructs)) {
       diagnosticReporter.report(
-          templateFfiTypeInvalid.withArguments(nativeType),
+          templateFfiTypeInvalid.withArguments(
+              nativeType, currentLibrary.isNonNullableByDefault),
           node.fileOffset,
           1,
           node.location.file);
@@ -431,50 +405,6 @@ class _FfiUseSiteTransformer extends FfiTransformer {
   /// parameter types are only NativeTypes, so we need to check this.
   bool _nativeTypeValid(DartType nativeType, {bool allowStructs: false}) {
     return convertNativeTypeToDartType(nativeType, allowStructs) != null;
-  }
-
-  void _ensureNativeTypeSized(
-      DartType nativeType, Expression node, Name targetName) {
-    if (!_nativeTypeSized(nativeType)) {
-      diagnosticReporter.report(
-          templateFfiTypeUnsized.withArguments(targetName.name, nativeType),
-          node.fileOffset,
-          1,
-          node.location.file);
-      throw _FfiStaticTypeError();
-    }
-  }
-
-  /// Unsized NativeTypes do not support [sizeOf] because their size is unknown.
-  /// Consequently, [allocate], [Pointer.load], [Pointer.store], and
-  /// [Pointer.elementAt] are not available.
-  bool _nativeTypeSized(DartType nativeType) {
-    if (nativeType is! InterfaceType) {
-      return false;
-    }
-    final Class nativeClass = (nativeType as InterfaceType).classNode;
-    if (env.isSubtypeOf(InterfaceType(nativeClass), InterfaceType(pointerClass),
-        SubtypeCheckMode.ignoringNullabilities)) {
-      return true;
-    }
-    if (hierarchy.isSubclassOf(nativeClass, structClass)) {
-      return true;
-    }
-    final NativeType nativeType_ = getType(nativeClass);
-    if (nativeType_ == null) {
-      return false;
-    }
-    if (kNativeTypeIntStart.index <= nativeType_.index &&
-        nativeType_.index <= kNativeTypeIntEnd.index) {
-      return true;
-    }
-    if (nativeType_ == NativeType.kFloat || nativeType_ == NativeType.kDouble) {
-      return true;
-    }
-    if (nativeType_ == NativeType.kPointer) {
-      return true;
-    }
-    return false;
   }
 
   void _ensureIsStaticFunction(Expression node) {

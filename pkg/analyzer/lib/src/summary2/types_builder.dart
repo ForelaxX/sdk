@@ -28,23 +28,19 @@ class NodesToBuildType {
 }
 
 class TypesBuilder {
-  final Dart2TypeSystem typeSystem;
-
-  TypesBuilder(this.typeSystem);
-
   DynamicTypeImpl get _dynamicType => DynamicTypeImpl.instance;
 
   VoidTypeImpl get _voidType => VoidTypeImpl.instance;
 
   /// Build types for all type annotations, and set types for declarations.
   void build(NodesToBuildType nodes) {
-    DefaultTypesBuilder(typeSystem).build(nodes.declarations);
+    DefaultTypesBuilder().build(nodes.declarations);
 
     for (var builder in nodes.typeBuilders) {
       builder.build();
     }
 
-    _MixinsInference(typeSystem).perform(nodes.declarations);
+    _MixinsInference().perform(nodes.declarations);
 
     for (var declaration in nodes.declarations) {
       _declaration(declaration);
@@ -55,6 +51,7 @@ class TypesBuilder {
     TypeParameterList typeParameterList,
     TypeAnnotation returnTypeNode,
     FormalParameterList parameterList,
+    NullabilitySuffix nullabilitySuffix,
   ) {
     var returnType = returnTypeNode?.type ?? _dynamicType;
 
@@ -76,10 +73,11 @@ class TypesBuilder {
       );
     }).toList();
 
-    return FunctionTypeImpl.synthetic(
-      returnType,
-      typeParameters,
-      formalParameters,
+    return FunctionTypeImpl(
+      typeFormals: typeParameters,
+      parameters: formalParameters,
+      returnType: returnType,
+      nullabilitySuffix: nullabilitySuffix,
     );
   }
 
@@ -149,6 +147,7 @@ class TypesBuilder {
         node.typeParameters,
         node.type,
         parameterList,
+        _nullability(node, node.question != null),
       );
       LazyAst.setType(node, type);
     } else {
@@ -166,8 +165,26 @@ class TypesBuilder {
       node.typeParameters,
       node.returnType,
       node.parameters,
+      _nullability(node, node.question != null),
     );
     LazyAst.setType(node, type);
+  }
+
+  bool _nonNullableEnabled(AstNode node) {
+    var unit = node.thisOrAncestorOfType<CompilationUnit>();
+    return unit.featureSet.isEnabled(Feature.non_nullable);
+  }
+
+  NullabilitySuffix _nullability(AstNode node, bool hasQuestion) {
+    if (_nonNullableEnabled(node)) {
+      if (hasQuestion) {
+        return NullabilitySuffix.question;
+      } else {
+        return NullabilitySuffix.none;
+      }
+    } else {
+      return NullabilitySuffix.star;
+    }
   }
 
   static DartType _getType(FormalParameter node) {
@@ -180,14 +197,17 @@ class TypesBuilder {
 
 /// Performs mixins inference in a [ClassDeclaration].
 class _MixinInference {
-  final Dart2TypeSystem typeSystem;
+  final ClassElementImpl element;
+  final TypeSystemImpl typeSystem;
   final FeatureSet featureSet;
   final InterfaceType classType;
 
   List<InterfaceType> mixinTypes = [];
   List<InterfaceType> supertypesForMixinInference;
 
-  _MixinInference(this.typeSystem, this.featureSet, this.classType);
+  _MixinInference(this.element, this.featureSet)
+      : typeSystem = element.library.typeSystem,
+        classType = element.thisType;
 
   NullabilitySuffix get _noneOrStarSuffix {
     return _nonNullableEnabled
@@ -320,10 +340,6 @@ class _MixinInference {
 
 /// Performs mixin inference for all declarations.
 class _MixinsInference {
-  final Dart2TypeSystem typeSystem;
-
-  _MixinsInference(this.typeSystem);
-
   void perform(List<AstNode> declarations) {
     for (var node in declarations) {
       if (node is ClassDeclaration || node is ClassTypeAlias) {
@@ -358,8 +374,7 @@ class _MixinsInference {
     element.linkedMixinInferenceCallback = _callbackWhenLoop;
     try {
       var featureSet = _unitFeatureSet(element);
-      _MixinInference(typeSystem, featureSet, element.thisType)
-          .perform(withClause);
+      _MixinInference(element, featureSet).perform(withClause);
     } finally {
       element.linkedMixinInferenceCallback = null;
     }

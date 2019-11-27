@@ -16,6 +16,9 @@
 #include <unistd.h>
 
 // Only OK to use here because this is test code.
+#include <condition_variable>  // NOLINT(build/c++11)
+#include <functional>          // NOLINT(build/c++11)
+#include <mutex>               // NOLINT(build/c++11)
 #include <thread>  // NOLINT(build/c++11)
 #endif
 
@@ -116,6 +119,14 @@ DART_EXPORT int64_t IntComputation(int8_t a, int16_t b, int32_t c, int64_t d) {
   std::cout << "IntComputation(" << static_cast<int>(a) << ", " << b << ", "
             << c << ", " << d << ")\n";
   int64_t retval = d - c + b - a;
+  std::cout << "returning " << retval << "\n";
+  return retval;
+}
+
+// Used in regress_39044_test.dart.
+DART_EXPORT int64_t Regress39044(int64_t a, int8_t b) {
+  std::cout << "Regress39044(" << a << ", " << static_cast<int>(b) << ")\n";
+  const int64_t retval = a - b;
   std::cout << "returning " << retval << "\n";
   return retval;
 }
@@ -553,7 +564,7 @@ DART_EXPORT void Regress37069(uint64_t a,
   Dart_ExecuteInternalCommand("gc-now", nullptr);
 }
 
-#if !defined(HOST_OS_WINDOWS) && !defined(TARGET_ARCH_DBC)
+#if !defined(HOST_OS_WINDOWS)
 DART_EXPORT void* UnprotectCodeOtherThread(void* isolate,
                                            std::condition_variable* var,
                                            std::mutex* mut) {
@@ -854,5 +865,32 @@ DART_EXPORT int TestCallbackWrongIsolate(void (*fn)()) {
 }
 
 #endif  // defined(TARGET_OS_LINUX)
+
+// Receives some pointer (Pointer<NativeType> in Dart) and writes some bits.
+DART_EXPORT void NativeTypePointerParam(void* p) {
+  uint8_t* p2 = reinterpret_cast<uint8_t*>(p);
+  p2[0] = 42;
+}
+
+// Manufactures some pointer (Pointer<NativeType> in Dart) with a bogus address.
+DART_EXPORT void* NativeTypePointerReturn() {
+  uint64_t bogus_address = 0x13370000;
+  return reinterpret_cast<void*>(bogus_address);
+}
+
+// Passes some pointer (Pointer<NativeType> in Dart) to Dart as argument.
+DART_EXPORT void CallbackNativeTypePointerParam(void (*f)(void*)) {
+  void* pointer = malloc(sizeof(int64_t));
+  f(pointer);
+  free(pointer);
+}
+
+// Receives some pointer (Pointer<NativeType> in Dart) from Dart as return
+// value.
+DART_EXPORT void CallbackNativeTypePointerReturn(void* (*f)()) {
+  void* p = f();
+  uint8_t* p2 = reinterpret_cast<uint8_t*>(p);
+  p2[0] = 42;
+}
 
 }  // namespace dart

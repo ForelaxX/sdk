@@ -446,6 +446,9 @@ class Assembler : public AssemblerBase {
   void PushRegister(Register r) { Push(r); }
   void PopRegister(Register r) { Pop(r); }
 
+  void PushRegisterPair(Register r0, Register r1) { PushPair(r0, r1); }
+  void PopRegisterPair(Register r0, Register r1) { PopPair(r0, r1); }
+
   void PushRegisters(const RegisterSet& registers);
   void PopRegisters(const RegisterSet& registers);
 
@@ -1327,31 +1330,25 @@ class Assembler : public AssemblerBase {
   void tst(Register rn, Operand o) { ands(ZR, rn, o); }
   void tsti(Register rn, const Immediate& imm) { andis(ZR, rn, imm); }
 
-  // We use an alias of add, where ARM recommends an alias of ubfm.
   void LslImmediate(Register rd,
                     Register rn,
                     int shift,
                     OperandSize sz = kDoubleWord) {
-    if (sz == kDoubleWord) {
-      add(rd, ZR, Operand(rn, LSL, shift));
-    } else {
-      addw(rd, ZR, Operand(rn, LSL, shift));
-    }
+    const int reg_size =
+        (sz == kDoubleWord) ? kXRegSizeInBits : kWRegSizeInBits;
+    ubfm(rd, rn, (reg_size - shift) % reg_size, reg_size - shift - 1, sz);
   }
-  // We use an alias of add, where ARM recommends an alias of ubfm.
   void LsrImmediate(Register rd,
                     Register rn,
                     int shift,
                     OperandSize sz = kDoubleWord) {
-    if (sz == kDoubleWord) {
-      add(rd, ZR, Operand(rn, LSR, shift));
-    } else {
-      addw(rd, ZR, Operand(rn, LSR, shift));
-    }
+    const int reg_size =
+        (sz == kDoubleWord) ? kXRegSizeInBits : kWRegSizeInBits;
+    ubfm(rd, rn, shift, reg_size - 1, sz);
   }
-  // We use an alias of add, where ARM recommends an alias of sbfm.
   void AsrImmediate(Register rd, Register rn, int shift) {
-    add(rd, ZR, Operand(rn, ASR, shift));
+    const int reg_size = kXRegSizeInBits;
+    sbfm(rd, rn, shift, reg_size - 1);
   }
 
   void VRecps(VRegister vd, VRegister vn);
@@ -1508,21 +1505,33 @@ class Assembler : public AssemblerBase {
                        const ExternalLabel* label,
                        ObjectPoolBuilderEntry::Patchability patchable);
   void LoadIsolate(Register dst);
+
+  // Note: the function never clobbers TMP, TMP2 scratch registers.
   void LoadObject(Register dst, const Object& obj);
+  // Note: the function never clobbers TMP, TMP2 scratch registers.
   void LoadUniqueObject(Register dst, const Object& obj);
+  // Note: the function never clobbers TMP, TMP2 scratch registers.
   void LoadImmediate(Register reg, int64_t imm);
+
   void LoadDImmediate(VRegister reg, double immd);
 
   // Load word from pool from the given offset using encoding that
   // InstructionPattern::DecodeLoadWordFromPool can decode.
+  //
+  // Note: the function never clobbers TMP, TMP2 scratch registers.
   void LoadWordFromPoolOffset(Register dst, uint32_t offset, Register pp = PP);
+
   void LoadDoubleWordFromPoolOffset(Register lower,
                                     Register upper,
                                     uint32_t offset);
 
   void PushObject(const Object& object) {
-    LoadObject(TMP, object);
-    Push(TMP);
+    if (IsSameObject(compiler::NullObject(), object)) {
+      Push(NULL_REG);
+    } else {
+      LoadObject(TMP, object);
+      Push(TMP);
+    }
   }
   void PushImmediate(int64_t immediate) {
     LoadImmediate(TMP, immediate);
@@ -1539,6 +1548,7 @@ class Assembler : public AssemblerBase {
   void LoadTaggedClassIdMayBeSmi(Register result, Register object);
 
   void SetupDartSP();
+  void SetupCSPFromThread(Register thr);
   void RestoreCSP();
 
   void EnterFrame(intptr_t frame_size);
@@ -1561,6 +1571,10 @@ class Assembler : public AssemblerBase {
   void CheckCodePointer();
   void RestoreCodePointer();
 
+  // Restores the values of the registers that are blocked to cache some values
+  // e.g. BARRIER_MASK and NULL_REG.
+  void RestorePinnedRegisters();
+
   void EnterDartFrame(intptr_t frame_size, Register new_pp = kNoRegister);
   void EnterOsrFrame(intptr_t extra_size, Register new_pp = kNoRegister);
   void LeaveDartFrame(RestorePP restore_pp = kRestoreCallerPP);
@@ -1577,10 +1591,6 @@ class Assembler : public AssemblerBase {
   void MonomorphicCheckedEntryJIT();
   void MonomorphicCheckedEntryAOT();
   void BranchOnMonomorphicCheckedEntryJIT(Label* label);
-
-  void UpdateAllocationStats(intptr_t cid);
-
-  void UpdateAllocationStatsWithSize(intptr_t cid, Register size_reg);
 
   // If allocation tracing for |cid| is enabled, will jump to |trace| label,
   // which will allocate in the runtime where tracing occurs.
@@ -1629,31 +1639,44 @@ class Assembler : public AssemblerBase {
                                     intptr_t index_scale,
                                     Register array,
                                     intptr_t index) const;
-  void LoadElementAddressForIntIndex(Register address,
-                                     bool is_external,
-                                     intptr_t cid,
-                                     intptr_t index_scale,
-                                     Register array,
-                                     intptr_t index);
-  Address ElementAddressForRegIndex(bool is_load,
-                                    bool is_external,
+  void ComputeElementAddressForIntIndex(Register address,
+                                        bool is_external,
+                                        intptr_t cid,
+                                        intptr_t index_scale,
+                                        Register array,
+                                        intptr_t index);
+  Address ElementAddressForRegIndex(bool is_external,
                                     intptr_t cid,
                                     intptr_t index_scale,
                                     Register array,
-                                    Register index);
-  void LoadElementAddressForRegIndex(Register address,
-                                     bool is_load,
-                                     bool is_external,
-                                     intptr_t cid,
-                                     intptr_t index_scale,
-                                     Register array,
-                                     Register index);
+                                    Register index,
+                                    Register temp);
 
-  void LoadUnaligned(Register dst, Register addr, Register tmp, OperandSize sz);
-  void StoreUnaligned(Register src,
-                      Register addr,
-                      Register tmp,
-                      OperandSize sz);
+  // Special version of ElementAddressForRegIndex for the case when cid and
+  // operand size for the target load don't match (e.g. when loading a few
+  // elements of the array with one load).
+  Address ElementAddressForRegIndexWithSize(bool is_external,
+                                            intptr_t cid,
+                                            OperandSize size,
+                                            intptr_t index_scale,
+                                            Register array,
+                                            Register index,
+                                            Register temp);
+
+  void ComputeElementAddressForRegIndex(Register address,
+                                        bool is_external,
+                                        intptr_t cid,
+                                        intptr_t index_scale,
+                                        Register array,
+                                        Register index);
+
+  // Returns object data offset for address calculation; for heap objects also
+  // accounts for the tag.
+  static int32_t HeapDataOffset(bool is_external, intptr_t cid) {
+    return is_external ?
+          0 :
+          (target::Instance::DataOffsetFor(cid) - kHeapObjectTag);
+  }
 
   static int32_t EncodeImm26BranchOffset(int64_t imm, int32_t instr) {
     const int32_t imm32 = static_cast<int32_t>(imm);
@@ -1673,6 +1696,7 @@ class Assembler : public AssemblerBase {
 
   void LoadWordFromPoolOffsetFixed(Register dst, uint32_t offset);
 
+  // Note: the function never clobbers TMP, TMP2 scratch registers.
   void LoadObjectHelper(Register dst, const Object& obj, bool is_unique);
 
   void AddSubHelper(OperandSize os,

@@ -2,9 +2,6 @@
 # for details. All rights reserved. Use of this source code is governed by a
 # BSD-style license that can be found in the LICENSE file.
 
-[ $arch == simdbc || $arch == simdbc64 ]
-*: Skip # SIMDBC will be deleted soon.
-
 [ $builder_tag == asan ]
 data_not_asan_test: SkipByDesign # This test tries to allocate too much memory on purpose.
 
@@ -18,6 +15,9 @@ function_callbacks_test/03: Skip
 
 [ $arch == arm && $system != android ]
 *: Skip # "hardfp" calling convention is not yet supported (iOS is also supported but not tested): dartbug.com/36309
+
+[ $compiler == dart2analyzer ]
+enable_ffi_test: SkipByDesign # This is a check for VM only.
 
 [ $runtime != dart_precompiled && $runtime != vm && $compiler != dart2analyzer ]
 *: SkipByDesign # FFI is a VM-only feature. (This test suite is part of the default set.)

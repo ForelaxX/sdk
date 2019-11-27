@@ -289,7 +289,7 @@ void IRRegExpMacroAssembler::FinalizeRegistersArray() {
       TypedData::New(kTypedDataInt32ArrayCid, registers_count_, Heap::kOld);
 }
 
-#if defined(TARGET_ARCH_ARM64) || defined(TARGET_ARCH_ARM)
+#if defined(TARGET_ARCH_ARM)
 // Disabling unaligned accesses forces the regexp engine to load characters one
 // by one instead of up to 4 at once, along with the associated performance hit.
 // TODO(zerny): Be less conservative about disabling unaligned accesses.
@@ -392,7 +392,8 @@ ConstantInstr* IRRegExpMacroAssembler::WordCharacterMapConstant() const {
   DEBUG_ASSERT(Thread::Current()->TopErrorHandlerIsSetJump());
   if (word_character_field.IsUninitialized()) {
     ASSERT(!Compiler::IsBackgroundCompilation());
-    const Error& error = Error::Handle(Z, word_character_field.Initialize());
+    const Error& error =
+        Error::Handle(Z, word_character_field.InitializeStatic());
     if (!error.IsNull()) {
       Report::LongJump(error);
     }

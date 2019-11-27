@@ -220,23 +220,17 @@ void ExitFrame::VisitObjectPointers(ObjectPointerVisitor* visitor) {
       reinterpret_cast<RawObject**>(fp()) +
       (is_interpreted() ? kKBCFirstObjectSlotFromFp
                         : runtime_frame_layout.last_fixed_object_from_fp);
-#if !defined(TARGET_ARCH_DBC)
   if (first_fixed <= last_fixed) {
     visitor->VisitPointers(first_fixed, last_fixed);
   } else {
     ASSERT(runtime_frame_layout.first_object_from_fp ==
            runtime_frame_layout.first_local_from_fp);
   }
-#else
-  ASSERT(last_fixed <= first_fixed);
-  visitor->VisitPointers(last_fixed, first_fixed);
-#endif
 }
 
 void EntryFrame::VisitObjectPointers(ObjectPointerVisitor* visitor) {
   ASSERT(visitor != NULL);
   // Visit objects between SP and (FP - callee_save_area).
-#if !defined(TARGET_ARCH_DBC)
   RawObject** first = is_interpreted() ? reinterpret_cast<RawObject**>(fp()) +
                                              kKBCSavedArgDescSlotFromEntryFp
                                        : reinterpret_cast<RawObject**>(sp());
@@ -245,13 +239,6 @@ void EntryFrame::VisitObjectPointers(ObjectPointerVisitor* visitor) {
                                             kExitLinkSlotFromEntryFp - 1;
   // There may not be any pointer to visit; in this case, first > last.
   visitor->VisitPointers(first, last);
-#else
-  // On DBC stack is growing upwards which implies fp() <= sp().
-  RawObject** first = reinterpret_cast<RawObject**>(fp());
-  RawObject** last = reinterpret_cast<RawObject**>(sp());
-  ASSERT(first <= last);
-  visitor->VisitPointers(first, last);
-#endif
 }
 
 void StackFrame::VisitObjectPointers(ObjectPointerVisitor* visitor) {
@@ -287,13 +274,15 @@ void StackFrame::VisitObjectPointers(ObjectPointerVisitor* visitor) {
   if (!code.IsNull()) {
     // Optimized frames have a stack map. We need to visit the frame based
     // on the stack map.
-    Array maps;
-    maps = Array::null();
-    StackMap map;
+    CompressedStackMaps maps;
+    maps = code.compressed_stackmaps();
+    CompressedStackMaps global_table;
+    global_table =
+        this->isolate()->object_store()->canonicalized_stack_map_entries();
+    CompressedStackMapsIterator it(maps, global_table);
     const uword start = Instructions::PayloadStart(code.instructions());
-    map = code.GetStackMap(pc() - start, &maps, &map);
-    if (!map.IsNull()) {
-#if !defined(TARGET_ARCH_DBC)
+    const uint32_t pc_offset = pc() - start;
+    if (it.Find(pc_offset)) {
       if (is_interpreted()) {
         UNIMPLEMENTED();
       }
@@ -311,11 +300,11 @@ void StackFrame::VisitObjectPointers(ObjectPointerVisitor* visitor) {
       // The spill slots and any saved registers are described in the stack
       // map.  The outgoing arguments are assumed to be tagged; the number
       // of outgoing arguments is not explicitly tracked.
-      intptr_t length = map.Length();
+
       // Spill slots are at the 'bottom' of the frame.
-      intptr_t spill_slot_count = length - map.SlowPathBitCount();
+      intptr_t spill_slot_count = it.SpillSlotBitCount();
       for (intptr_t bit = 0; bit < spill_slot_count; ++bit) {
-        if (map.IsObject(bit)) {
+        if (it.IsObject(bit)) {
           visitor->VisitPointer(last);
         }
         --last;
@@ -323,8 +312,8 @@ void StackFrame::VisitObjectPointers(ObjectPointerVisitor* visitor) {
 
       // The live registers at the 'top' of the frame comprise the rest of the
       // stack map.
-      for (intptr_t bit = length - 1; bit >= spill_slot_count; --bit) {
-        if (map.IsObject(bit)) {
+      for (intptr_t bit = it.Length() - 1; bit >= spill_slot_count; --bit) {
+        if (it.IsObject(bit)) {
           visitor->VisitPointer(first);
         }
         ++first;
@@ -341,50 +330,17 @@ void StackFrame::VisitObjectPointers(ObjectPointerVisitor* visitor) {
       last = reinterpret_cast<RawObject**>(
           fp() + (runtime_frame_layout.first_object_from_fp * kWordSize));
       visitor->VisitPointers(first, last);
-#else
-      RawObject** first = reinterpret_cast<RawObject**>(fp());
-      RawObject** last = reinterpret_cast<RawObject**>(sp());
-
-      // Visit fixed prefix of the frame.
-      RawObject** first_fixed =
-          first + runtime_frame_layout.first_object_from_fp;
-      RawObject** last_fixed =
-          first + (runtime_frame_layout.first_object_from_fp + 1);
-      ASSERT(first_fixed <= last_fixed);
-      visitor->VisitPointers(first_fixed, last_fixed);
-
-      // A stack map is present in the code object, use the stack map to
-      // visit frame slots which are marked as having objects.
-      //
-      // The layout of the frame is (lower addresses to the left):
-      // | registers | outgoing arguments |
-      // |XXXXXXXXXXX|--------------------|
-      //
-      // The DBC registers are described in the stack map.
-      // The outgoing arguments are assumed to be tagged; the number
-      // of outgoing arguments is not explicitly tracked.
-      ASSERT(map.SlowPathBitCount() == 0);
-
-      // Visit DBC registers that contain tagged values.
-      intptr_t length = map.Length();
-      for (intptr_t bit = 0; bit < length; ++bit) {
-        if (map.IsObject(bit)) {
-          visitor->VisitPointer(first + bit);
-        }
-      }
-
-      // Visit outgoing arguments.
-      if ((first + length) <= last) {
-        visitor->VisitPointers(first + length, last);
-      }
-#endif  // !defined(TARGET_ARCH_DBC)
       return;
     }
 
-    // No stack map, fall through.
+    // If we are missing a stack map for a given PC offset, this must either be
+    // unoptimized code, code with no stack map information at all, or the entry
+    // to an osr function. In each of these cases, all stack slots contain
+    // tagged pointers, so fall through.
+    ASSERT(!code.is_optimized() || maps.IsNull() ||
+           (pc_offset == code.EntryPoint() - code.PayloadStart()));
   }
 
-#if !defined(TARGET_ARCH_DBC)
   // For normal unoptimized Dart frames and Stub frames each slot
   // between the first and last included are tagged objects.
   if (is_interpreted()) {
@@ -402,12 +358,6 @@ void StackFrame::VisitObjectPointers(ObjectPointerVisitor* visitor) {
       is_interpreted()
           ? sp()
           : fp() + (runtime_frame_layout.first_object_from_fp * kWordSize));
-#else
-  // On DBC stack grows upwards: fp() <= sp().
-  RawObject** first = reinterpret_cast<RawObject**>(
-      fp() + (runtime_frame_layout.first_object_from_fp * kWordSize));
-  RawObject** last = reinterpret_cast<RawObject**>(sp());
-#endif  // !defined(TARGET_ARCH_DBC)
 
   visitor->VisitPointers(first, last);
 }
@@ -585,6 +535,17 @@ bool StackFrame::IsValid() const {
   return (LookupDartCode() != Code::null());
 }
 
+void StackFrame::DumpCurrentTrace() {
+  StackFrameIterator frames(ValidationPolicy::kDontValidateFrames,
+                            Thread::Current(),
+                            StackFrameIterator::kNoCrossThreadIteration);
+  StackFrame* frame = frames.NextFrame();
+  while (frame != nullptr) {
+    OS::PrintErr("%s\n", frame->ToCString());
+    frame = frames.NextFrame();
+  }
+}
+
 void StackFrameIterator::SetupLastExitFrameData() {
   ASSERT(thread_ != NULL);
   uword exit_marker = thread_->top_exit_frame_info();
@@ -651,7 +612,6 @@ StackFrameIterator::StackFrameIterator(uword last_fp,
   }
 }
 
-#if !defined(TARGET_ARCH_DBC)
 StackFrameIterator::StackFrameIterator(uword fp,
                                        uword sp,
                                        uword pc,
@@ -673,7 +633,6 @@ StackFrameIterator::StackFrameIterator(uword fp,
     frames_.CheckIfInterpreted(fp);
   }
 }
-#endif
 
 StackFrame* StackFrameIterator::NextFrame() {
   // When we are at the start of iteration after having created an
@@ -693,7 +652,6 @@ StackFrame* StackFrameIterator::NextFrame() {
       return NULL;
     }
     UnpoisonStack(frames_.fp_);
-#if !defined(TARGET_ARCH_DBC)
     if (frames_.pc_ == 0) {
       // Iteration starts from an exit frame given by its fp.
       current_frame_ = NextExitFrame();
@@ -708,12 +666,6 @@ StackFrame* StackFrameIterator::NextFrame() {
       // Iteration starts from a Dart or stub frame given by its fp, sp, and pc.
       current_frame_ = frames_.NextFrame(validate_);
     }
-#else
-    // Iteration starts from an exit frame given by its fp. This is the only
-    // mode supported on DBC.
-    ASSERT(frames_.pc_ == 0);
-    current_frame_ = NextExitFrame();
-#endif  // !defined(TARGET_ARCH_DBC)
     return current_frame_;
   }
   ASSERT(!validate_ || current_frame_->IsValid());
@@ -861,14 +813,7 @@ intptr_t InlinedFunctionsIterator::GetDeoptFpOffset() const {
   for (intptr_t index = index_; index < deopt_instructions_.length(); index++) {
     DeoptInstr* deopt_instr = deopt_instructions_[index];
     if (deopt_instr->kind() == DeoptInstr::kCallerFp) {
-      intptr_t fp_offset = (index - num_materializations_);
-#if defined(TARGET_ARCH_DBC)
-      // Stack on DBC is growing upwards but we record deopt commands
-      // in the same order we record them on other architectures as if
-      // the stack was growing downwards.
-      fp_offset = dest_frame_size_ - fp_offset;
-#endif
-      return fp_offset;
+      return index - num_materializations_;
     }
   }
   UNREACHABLE();

@@ -13,7 +13,7 @@ import 'package:analyzer/src/generated/testing/ast_test_factory.dart';
 import 'package:test/test.dart';
 import 'package:test_reflective_loader/test_reflective_loader.dart';
 
-import '../resolution/driver_resolution.dart';
+import '../../../generated/test_analysis_context.dart';
 
 main() {
   defineReflectiveSuite(() {
@@ -21,20 +21,19 @@ main() {
   });
 }
 
-/// Tests for the [ExitDetector] that require that the control flow and spread
-/// experiments be enabled.
 @reflectiveTest
-class LegacyTypeAsserterTest extends DriverResolutionTest {
+class LegacyTypeAsserterTest {
   TypeProvider typeProvider;
-  setUp() async {
-    await super.setUp();
-    typeProvider = await this.driver.currentSession.typeProvider;
+
+  void setUp() {
+    var analysisContext = TestAnalysisContext();
+    typeProvider = analysisContext.typeProviderLegacy;
   }
 
   test_nullableUnit_expressionStaticType_bottom() async {
     var identifier = AstTestFactory.identifier3('foo');
     var unit = _wrapExpression(identifier);
-    identifier.staticType = BottomTypeImpl.instance;
+    identifier.staticType = NeverTypeImpl.instance;
     expect(() {
       LegacyTypeAsserter.assertLegacyTypes(unit);
     }, throwsStateError);
@@ -43,7 +42,7 @@ class LegacyTypeAsserterTest extends DriverResolutionTest {
   test_nullableUnit_expressionStaticType_bottomQuestion() async {
     var identifier = AstTestFactory.identifier3('foo');
     var unit = _wrapExpression(identifier);
-    identifier.staticType = BottomTypeImpl.instanceNullable;
+    identifier.staticType = NeverTypeImpl.instanceNullable;
     LegacyTypeAsserter.assertLegacyTypes(unit);
   }
 

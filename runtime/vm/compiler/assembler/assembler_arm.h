@@ -370,6 +370,28 @@ class Assembler : public AssemblerBase {
   void PushRegister(Register r) { Push(r); }
   void PopRegister(Register r) { Pop(r); }
 
+  // Push two registers to the stack; r0 to lower address location.
+  void PushRegisterPair(Register r0, Register r1) {
+    if ((r0 < r1) && (r0 != SP) && (r1 != SP)) {
+      RegList reg_list = (1 << r0) | (1 << r1);
+      PushList(reg_list);
+    } else {
+      PushRegister(r1);
+      PushRegister(r0);
+    }
+  }
+
+  // Pop two registers from the stack; r0 from lower address location.
+  void PopRegisterPair(Register r0, Register r1) {
+    if ((r0 < r1) && (r0 != SP) && (r1 != SP)) {
+      RegList reg_list = (1 << r0) | (1 << r1);
+      PopList(reg_list);
+    } else {
+      PopRegister(r0);
+      PopRegister(r1);
+    }
+  }
+
   void Bind(Label* label);
   void Jump(Label* label) { b(label); }
 
@@ -504,8 +526,7 @@ class Assembler : public AssemblerBase {
   void ldrsh(Register rd, Address ad, Condition cond = AL);
 
   // ldrd and strd actually support the full range of addressing modes, but
-  // we don't use them, and we need to split them up into two instructions for
-  // ARMv5TE, so we only support the base + offset mode.
+  // we don't use them, so we only support the base + offset mode.
   // rd must be an even register and rd2 must be rd + 1.
   void ldrd(Register rd,
             Register rd2,
@@ -1093,9 +1114,6 @@ class Assembler : public AssemblerBase {
   // allocation stats. These are separate assembler macros so we can
   // avoid a dependent load too nearby the load of the table address.
   void LoadAllocationStatsAddress(Register dest, intptr_t cid);
-  void IncrementAllocationStats(Register stats_addr, intptr_t cid);
-  void IncrementAllocationStatsWithSize(Register stats_addr_reg,
-                                        Register size_reg);
 
   Address ElementAddressForIntIndex(bool is_load,
                                     bool is_external,

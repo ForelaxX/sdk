@@ -139,6 +139,9 @@ void ReturnInstr::EmitNativeCode(FlowGraphCompiler* compiler) {
   __ Bind(&stack_ok);
 #endif
   ASSERT(__ constant_pool_allowed());
+  if (yield_index() != RawPcDescriptors::kInvalidYieldIndex) {
+    compiler->EmitYieldPositionMetadata(token_pos(), yield_index());
+  }
   __ LeaveDartFrameAndReturn();  // Disallows constant pool use.
   // This ReturnInstr may be emitted out of order by the optimizer. The next
   // block may be a target expecting a properly set constant pool pointer.
@@ -510,7 +513,9 @@ static void EmitAssertBoolean(Register reg,
   compiler->GenerateRuntimeCall(token_pos, deopt_id,
                                 kNonBoolTypeErrorRuntimeEntry, 1, locs);
   // We should never return here.
+#if defined(DEBUG)
   __ bkpt(0);
+#endif
   __ Bind(&done);
 }
 
@@ -961,19 +966,9 @@ void NativeCallInstr::EmitNativeCode(FlowGraphCompiler* compiler) {
     entry = reinterpret_cast<uword>(native_c_function());
     if (is_bootstrap_native()) {
       stub = &StubCode::CallBootstrapNative();
-#if defined(USING_SIMULATOR)
-      entry = Simulator::RedirectExternalReference(
-          entry, Simulator::kBootstrapNativeCall, NativeEntry::kNumArguments);
-#endif
     } else if (is_auto_scope()) {
-      // In the case of non bootstrap native methods the CallNativeCFunction
-      // stub generates the redirection address when running under the simulator
-      // and hence we do not change 'entry' here.
       stub = &StubCode::CallAutoScopeNative();
     } else {
-      // In the case of non bootstrap native methods the CallNativeCFunction
-      // stub generates the redirection address when running under the simulator
-      // and hence we do not change 'entry' here.
       stub = &StubCode::CallNoScopeNative();
     }
   }
@@ -997,6 +992,7 @@ void NativeCallInstr::EmitNativeCode(FlowGraphCompiler* compiler) {
 
 void FfiCallInstr::EmitNativeCode(FlowGraphCompiler* compiler) {
   const Register saved_fp = locs()->temp(0).reg();
+  const Register temp = locs()->temp(1).reg();
   const Register branch = locs()->in(TargetAddressIndex()).reg();
 
   // Save frame pointer because we're going to update it when we enter the exit
@@ -1020,8 +1016,8 @@ void FfiCallInstr::EmitNativeCode(FlowGraphCompiler* compiler) {
   for (intptr_t i = 0, n = NativeArgCount(); i < n; ++i) {
     const Location origin = rebase.Rebase(locs()->in(i));
     const Location target = arg_locations_[i];
-    NoTemporaryAllocator no_temp;
-    compiler->EmitMove(target, origin, &no_temp);
+    ConstantTemporaryAllocator temp_alloc(temp);
+    compiler->EmitMove(target, origin, &temp_alloc);
   }
 
   // We need to copy the return address up into the dummy stack frame so the
@@ -1037,15 +1033,14 @@ void FfiCallInstr::EmitNativeCode(FlowGraphCompiler* compiler) {
                                  RawPcDescriptors::Kind::kOther, locs());
 
   // Update information in the thread object and enter a safepoint.
-  const Register tmp = locs()->temp(1).reg();
   if (CanExecuteGeneratedCodeInSafepoint()) {
-    __ TransitionGeneratedToNative(branch, FPREG, saved_fp, tmp,
+    __ TransitionGeneratedToNative(branch, FPREG, saved_fp, temp,
                                    /*enter_safepoint=*/true);
 
     __ blx(branch);
 
     // Update information in the thread object and leave the safepoint.
-    __ TransitionNativeToGenerated(saved_fp, tmp, /*leave_safepoint=*/true);
+    __ TransitionNativeToGenerated(saved_fp, temp, /*leave_safepoint=*/true);
   } else {
     // We cannot trust that this code will be executable within a safepoint.
     // Therefore we delegate the responsibility of entering/exiting the
@@ -1057,7 +1052,7 @@ void FfiCallInstr::EmitNativeCode(FlowGraphCompiler* compiler) {
                         call_native_through_safepoint_entry_point_offset()));
 
     // Calls R8 in a safepoint and clobbers NOTFP and R4.
-    ASSERT(branch == R8 && tmp == NOTFP && locs()->temp(2).reg() == R4);
+    ASSERT(branch == R8 && temp == NOTFP && locs()->temp(2).reg() == R4);
     __ blx(TMP);
   }
 
@@ -3185,6 +3180,35 @@ void AllocateContextInstr::EmitNativeCode(FlowGraphCompiler* compiler) {
   __ LoadImmediate(R1, num_context_variables());
   compiler->GenerateCall(token_pos(), StubCode::AllocateContext(),
                          RawPcDescriptors::kOther, locs());
+}
+
+LocationSummary* InitInstanceFieldInstr::MakeLocationSummary(Zone* zone,
+                                                             bool opt) const {
+  const intptr_t kNumInputs = 1;
+  const intptr_t kNumTemps = 1;
+  LocationSummary* locs = new (zone)
+      LocationSummary(zone, kNumInputs, kNumTemps, LocationSummary::kCall);
+  locs->set_in(0, Location::RegisterLocation(R0));
+  locs->set_temp(0, Location::RegisterLocation(R1));
+  return locs;
+}
+
+void InitInstanceFieldInstr::EmitNativeCode(FlowGraphCompiler* compiler) {
+  Register instance = locs()->in(0).reg();
+  Register temp = locs()->temp(0).reg();
+  compiler::Label no_call;
+
+  __ ldr(temp, compiler::FieldAddress(instance, field().Offset()));
+  __ CompareObject(temp, Object::sentinel());
+  __ b(&no_call, NE);
+
+  __ PushObject(Object::null_object());  // Make room for (unused) result.
+  __ Push(instance);
+  __ PushObject(Field::ZoneHandle(field().Original()));
+  compiler->GenerateRuntimeCall(token_pos(), deopt_id(),
+                                kInitInstanceFieldRuntimeEntry, 2, locs());
+  __ Drop(3);  // Remove arguments and result placeholder.
+  __ Bind(&no_call);
 }
 
 LocationSummary* InitStaticFieldInstr::MakeLocationSummary(Zone* zone,

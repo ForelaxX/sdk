@@ -57,6 +57,7 @@ class ObjectPointerVisitor;
   V(CompleterFuture, "future")                                                 \
   V(CompleterGetFuture, "get:future")                                          \
   V(CompleterSyncConstructor, "Completer.sync")                                \
+  V(CompressedStackMaps, "CompressedStackMaps")                                \
   V(ConstructorStacktracePrefix, "new ")                                       \
   V(Context, "Context")                                                        \
   V(ContextScope, "ContextScope")                                              \
@@ -64,6 +65,7 @@ class ObjectPointerVisitor;
   V(Current, "current")                                                        \
   V(CurrentContextVar, ":current_context_var")                                 \
   V(CyclicInitializationError, "CyclicInitializationError")                    \
+  V(LateInitializationError, "_LateInitializationError")                       \
   V(DartCollection, "dart:collection")                                         \
   V(DartCore, "dart:core")                                                     \
   V(DartDeveloper, "dart:developer")                                           \
@@ -206,6 +208,7 @@ class ObjectPointerVisitor;
   V(MoveNext, "moveNext")                                                      \
   V(Namespace, "Namespace")                                                    \
   V(Native, "native")                                                          \
+  V(Never, "Never")                                                            \
   V(NoSuchMethod, "noSuchMethod")                                              \
   V(NoSuchMethodError, "NoSuchMethodError")                                    \
   V(NotInitialized, "<not initialized>")                                       \
@@ -245,7 +248,6 @@ class ObjectPointerVisitor;
   V(SpaceIsFromSpace, " is from ")                                             \
   V(SpaceOfSpace, " of ")                                                      \
   V(SpaceWhereNewLine, " where\n")                                             \
-  V(StackMap, "StackMap")                                                      \
   V(StackOverflowError, "StackOverflowError")                                  \
   V(StackTraceParameter, ":stack_trace")                                       \
   V(StackTraceVar, ":stack_trace_var")                                         \
@@ -341,6 +343,7 @@ class ObjectPointerVisitor;
   V(_Float64x2ArrayView, "_Float64x2ArrayView")                                \
   V(_Float64x2List, "_Float64x2List")                                          \
   V(_FunctionTypeMirror, "_FunctionTypeMirror")                                \
+  V(_FutureListener, "_FutureListener")                                        \
   V(_GrowableList, "_GrowableList")                                            \
   V(_GrowableListFactory, "_GrowableList.")                                    \
   V(_GrowableListWithData, "_GrowableList._withData")                          \
@@ -415,12 +418,14 @@ class ObjectPointerVisitor;
   V(_classRangeCheck, "_classRangeCheck")                                      \
   V(_current, "_current")                                                      \
   V(_ensureScheduleImmediate, "_ensureScheduleImmediate")                      \
+  V(_future, "_future")                                                        \
   V(_get, "_get")                                                              \
   V(_handleMessage, "_handleMessage")                                          \
   V(_instanceOf, "_instanceOf")                                                \
   V(_lookupHandler, "_lookupHandler")                                          \
   V(_name, "_name")                                                            \
   V(_rehashObjects, "_rehashObjects")                                          \
+  V(_resultOrListeners, "_resultOrListeners")                                  \
   V(_runExtension, "_runExtension")                                            \
   V(_runPendingImmediateCallback, "_runPendingImmediateCallback")              \
   V(_setLength, "_setLength")                                                  \
@@ -431,6 +436,7 @@ class ObjectPointerVisitor;
   V(_state, "_state")                                                          \
   V(_wordCharacterMap, "_wordCharacterMap")                                    \
   V(add, "add")                                                                \
+  V(callback, "callback")                                                      \
   V(capture_length, ":capture_length")                                         \
   V(capture_start_index, ":capture_start_index")                               \
   V(char_in_capture, ":char_in_capture")                                       \
@@ -577,6 +583,9 @@ class Symbols : public AllStatic {
   static const String& Star() { return *(symbol_handles_[kNullCharId + '*']); }
   static const String& Percent() {
     return *(symbol_handles_[kNullCharId + '%']);
+  }
+  static const String& QuestionMark() {
+    return *(symbol_handles_[kNullCharId + '?']);
   }
   static const String& Caret() { return *(symbol_handles_[kNullCharId + '^']); }
   static const String& Tilde() { return *(symbol_handles_[kNullCharId + '~']); }

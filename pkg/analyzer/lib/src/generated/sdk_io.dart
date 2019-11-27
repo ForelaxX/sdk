@@ -41,7 +41,7 @@ abstract class AbstractDartSdk implements DartSdk {
   /**
    * The [AnalysisContext] which is used for all of the sources in this SDK.
    */
-  InternalAnalysisContext _analysisContext;
+  SdkAnalysisContext _analysisContext;
 
   /**
    * The mapping from Dart URI's to the corresponding sources.
@@ -63,9 +63,8 @@ abstract class AbstractDartSdk implements DartSdk {
   @override
   AnalysisContext get context {
     if (_analysisContext == null) {
-      _analysisContext = new SdkAnalysisContext(_analysisOptions);
-      SourceFactory factory = new SourceFactory([new DartUriResolver(this)]);
-      _analysisContext.sourceFactory = factory;
+      var factory = SourceFactory([DartUriResolver(this)]);
+      _analysisContext = SdkAnalysisContext(_analysisOptions, factory);
     }
     return _analysisContext;
   }
@@ -117,9 +116,9 @@ abstract class AbstractDartSdk implements DartSdk {
     try {
       return new FileBasedSource(file, Uri.parse(path));
     } on FormatException catch (exception, stackTrace) {
-      AnalysisEngine.instance.logger.logInformation(
+      AnalysisEngine.instance.instrumentationService.logInfo(
           "Failed to create URI: $path",
-          new CaughtException(exception, stackTrace));
+          CaughtException(exception, stackTrace));
     }
     return null;
   }

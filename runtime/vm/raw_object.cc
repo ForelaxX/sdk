@@ -176,10 +176,11 @@ intptr_t RawObject::HeapSizeFromClass() const {
       instance_size = CodeSourceMap::InstanceSize(length);
       break;
     }
-    case kStackMapCid: {
-      const RawStackMap* map = reinterpret_cast<const RawStackMap*>(this);
-      intptr_t length = map->ptr()->length_;
-      instance_size = StackMap::InstanceSize(length);
+    case kCompressedStackMapsCid: {
+      const RawCompressedStackMaps* maps =
+          reinterpret_cast<const RawCompressedStackMaps*>(this);
+      intptr_t length = maps->ptr()->payload_size();
+      instance_size = CompressedStackMaps::InstanceSize(length);
       break;
     }
     case kLocalVarDescriptorsCid: {
@@ -215,9 +216,9 @@ intptr_t RawObject::HeapSizeFromClass() const {
 #if defined(DEBUG)
       auto class_table = isolate->shared_class_table();
 #if !defined(DART_PRECOMPILED_RUNTIME)
-      auto reload_context = isolate->reload_context();
+      auto reload_context = isolate->group()->reload_context();
       const bool use_saved_class_table =
-          reload_context != nullptr ? reload_context->UseSavedClassTableForGC()
+          reload_context != nullptr ? reload_context->UseSavedSizeTableForGC()
                                     : false;
 #else
       const bool use_saved_class_table = false;
@@ -531,7 +532,7 @@ NULL_VISITOR(DynamicLibrary)
 VARIABLE_NULL_VISITOR(Instructions, Instructions::Size(raw_obj))
 VARIABLE_NULL_VISITOR(PcDescriptors, raw_obj->ptr()->length_)
 VARIABLE_NULL_VISITOR(CodeSourceMap, raw_obj->ptr()->length_)
-VARIABLE_NULL_VISITOR(StackMap, raw_obj->ptr()->length_)
+VARIABLE_NULL_VISITOR(CompressedStackMaps, raw_obj->ptr()->payload_size())
 VARIABLE_NULL_VISITOR(OneByteString, Smi::Value(raw_obj->ptr()->length_))
 VARIABLE_NULL_VISITOR(TwoByteString, Smi::Value(raw_obj->ptr()->length_))
 // Abstract types don't have their visitor called.

@@ -13,19 +13,26 @@ void DescriptorList::AddDescriptor(RawPcDescriptors::Kind kind,
                                    intptr_t pc_offset,
                                    intptr_t deopt_id,
                                    TokenPosition token_pos,
-                                   intptr_t try_index) {
+                                   intptr_t try_index,
+                                   intptr_t yield_index) {
+  // yield index 0 is reserved for normal entry.
+  RELEASE_ASSERT(yield_index != 0);
+
   ASSERT((kind == RawPcDescriptors::kRuntimeCall) ||
          (kind == RawPcDescriptors::kBSSRelocation) ||
-         (kind == RawPcDescriptors::kOther) || (deopt_id != DeoptId::kNone));
+         (kind == RawPcDescriptors::kOther) ||
+         (yield_index != RawPcDescriptors::kInvalidYieldIndex) ||
+         (deopt_id != DeoptId::kNone));
 
-  // When precompiling, we only use pc descriptors for exceptions and
-  // relocations.
+  // When precompiling, we only use pc descriptors for exceptions,
+  // relocations and yield indices.
   if (!FLAG_precompiled_mode || try_index != -1 ||
+      yield_index != RawPcDescriptors::kInvalidYieldIndex ||
       kind == RawPcDescriptors::kBSSRelocation) {
-    int32_t merged_kind_try =
-        RawPcDescriptors::MergedKindTry::Encode(kind, try_index);
+    const int32_t kind_and_metadata =
+        RawPcDescriptors::KindAndMetadata::Encode(kind, try_index, yield_index);
 
-    PcDescriptors::EncodeInteger(&encoded_data_, merged_kind_try);
+    PcDescriptors::EncodeInteger(&encoded_data_, kind_and_metadata);
     PcDescriptors::EncodeInteger(&encoded_data_, pc_offset - prev_pc_offset);
     prev_pc_offset = pc_offset;
 
@@ -46,46 +53,138 @@ RawPcDescriptors* DescriptorList::FinalizePcDescriptors(uword entry_point) {
   return PcDescriptors::New(&encoded_data_);
 }
 
-void StackMapTableBuilder::AddEntry(intptr_t pc_offset,
-                                    BitmapBuilder* bitmap,
-                                    intptr_t register_bit_count) {
-  ASSERT(Smi::IsValid(pc_offset));
-  pc_offset_ = Smi::New(pc_offset);
-  stack_map_ = StackMap::New(bitmap, register_bit_count);
-  list_.Add(pc_offset_, Heap::kOld);
-  list_.Add(stack_map_, Heap::kOld);
+// Encode unsigned integer |value| in LEB128 format and store into |data|.
+void CompressedStackMapsBuilder::EncodeLEB128(GrowableArray<uint8_t>* data,
+                                              uintptr_t value) {
+  while (true) {
+    uint8_t part = value & 0x7f;
+    value >>= 7;
+    if (value != 0) part |= 0x80;
+    data->Add(part);
+    if (value == 0) break;
+  }
 }
 
-bool StackMapTableBuilder::Verify() {
-  intptr_t num_entries = Length();
-  for (intptr_t i = 1; i < num_entries; i++) {
-    pc_offset_ = OffsetAt(i - 1);
-    auto const offset1 = pc_offset_.Value();
-    pc_offset_ = OffsetAt(i);
-    auto const offset2 = pc_offset_.Value();
-    // Ensure there are no duplicates and the entries are sorted.
-    if (offset1 >= offset2) return false;
+void CompressedStackMapsBuilder::AddEntry(intptr_t pc_offset,
+                                          BitmapBuilder* bitmap,
+                                          intptr_t spill_slot_bit_count) {
+  ASSERT(bitmap != nullptr);
+  ASSERT(pc_offset > last_pc_offset_);
+  ASSERT(spill_slot_bit_count >= 0 && spill_slot_bit_count <= bitmap->Length());
+  auto const pc_delta = pc_offset - last_pc_offset_;
+  auto const non_spill_slot_bit_count = bitmap->Length() - spill_slot_bit_count;
+  EncodeLEB128(&encoded_bytes_, pc_delta);
+  EncodeLEB128(&encoded_bytes_, spill_slot_bit_count);
+  EncodeLEB128(&encoded_bytes_, non_spill_slot_bit_count);
+  bitmap->AppendAsBytesTo(&encoded_bytes_);
+  last_pc_offset_ = pc_offset;
+}
+
+RawCompressedStackMaps* CompressedStackMapsBuilder::Finalize() const {
+  if (encoded_bytes_.length() == 0) return CompressedStackMaps::null();
+  return CompressedStackMaps::NewInlined(encoded_bytes_);
+}
+
+// Decode unsigned integer in LEB128 format from the payload of |maps| and
+// update |byte_index|.
+uintptr_t CompressedStackMapsIterator::DecodeLEB128(
+    const CompressedStackMaps& maps,
+    uintptr_t* byte_index) {
+  uword shift = 0;
+  uintptr_t value = 0;
+  uint8_t part = 0;
+  do {
+    ASSERT(*byte_index < maps.payload_size());
+    part = maps.PayloadByte((*byte_index)++);
+    value |= static_cast<uintptr_t>(part & 0x7f) << shift;
+    shift += 7;
+  } while ((part & 0x80) != 0);
+
+  return value;
+}
+
+bool CompressedStackMapsIterator::MoveNext() {
+  // Empty CompressedStackMaps are represented as null values.
+  if (maps_.IsNull() || next_offset_ >= maps_.payload_size()) return false;
+  uintptr_t offset = next_offset_;
+
+  auto const pc_delta = DecodeLEB128(maps_, &offset);
+  ASSERT(pc_delta <= (kMaxUint32 - current_pc_offset_));
+  current_pc_offset_ += pc_delta;
+
+  // Table-using CSMs have a table offset after the PC offset delta, whereas
+  // the post-delta part of inlined entries has the same information as
+  // global table entries.
+  if (maps_.UsesGlobalTable()) {
+    current_global_table_offset_ = DecodeLEB128(maps_, &offset);
+    ASSERT(current_global_table_offset_ < bits_container_.payload_size());
+
+    // Since generally we only use entries in the GC and the GC only needs
+    // the rest of the entry information if the PC offset matches, we lazily
+    // load and cache the information stored in the global object when it is
+    // actually requested.
+    current_spill_slot_bit_count_ = -1;
+    current_non_spill_slot_bit_count_ = -1;
+    current_bits_offset_ = -1;
+  } else {
+    current_spill_slot_bit_count_ = DecodeLEB128(maps_, &offset);
+    ASSERT(current_spill_slot_bit_count_ >= 0);
+
+    current_non_spill_slot_bit_count_ = DecodeLEB128(maps_, &offset);
+    ASSERT(current_non_spill_slot_bit_count_ >= 0);
+
+    const auto stackmap_bits =
+        current_spill_slot_bit_count_ + current_non_spill_slot_bit_count_;
+    const uintptr_t stackmap_size =
+        Utils::RoundUp(stackmap_bits, kBitsPerByte) >> kBitsPerByteLog2;
+    ASSERT(stackmap_size <= (maps_.payload_size() - offset));
+
+    current_bits_offset_ = offset;
+    offset += stackmap_size;
   }
+
+  next_offset_ = offset;
   return true;
 }
 
-RawArray* StackMapTableBuilder::FinalizeStackMaps(const Code& code) {
-  ASSERT(Verify());
-  intptr_t num_entries = Length();
-  if (num_entries == 0) {
-    return Object::empty_array().raw();
-  }
-  return Array::MakeFixedLength(list_);
+intptr_t CompressedStackMapsIterator::Length() {
+  EnsureFullyLoadedEntry();
+  return current_spill_slot_bit_count_ + current_non_spill_slot_bit_count_;
+}
+intptr_t CompressedStackMapsIterator::SpillSlotBitCount() {
+  EnsureFullyLoadedEntry();
+  return current_spill_slot_bit_count_;
 }
 
-RawSmi* StackMapTableBuilder::OffsetAt(intptr_t index) const {
-  pc_offset_ ^= list_.At(2 * index);
-  return pc_offset_.raw();
+bool CompressedStackMapsIterator::IsObject(intptr_t bit_index) {
+  EnsureFullyLoadedEntry();
+  ASSERT(!bits_container_.IsNull());
+  ASSERT(bit_index >= 0 && bit_index < Length());
+  const intptr_t byte_index = bit_index >> kBitsPerByteLog2;
+  const intptr_t bit_remainder = bit_index & (kBitsPerByte - 1);
+  uint8_t byte_mask = 1U << bit_remainder;
+  const intptr_t byte_offset = current_bits_offset_ + byte_index;
+  return (bits_container_.PayloadByte(byte_offset) & byte_mask) != 0;
 }
 
-RawStackMap* StackMapTableBuilder::MapAt(intptr_t index) const {
-  stack_map_ ^= list_.At(2 * index + 1);
-  return stack_map_.raw();
+void CompressedStackMapsIterator::LazyLoadGlobalTableEntry() {
+  ASSERT(maps_.UsesGlobalTable() && bits_container_.IsGlobalTable());
+  ASSERT(HasLoadedEntry());
+  ASSERT(current_global_table_offset_ < bits_container_.payload_size());
+
+  uintptr_t offset = current_global_table_offset_;
+  current_spill_slot_bit_count_ = DecodeLEB128(bits_container_, &offset);
+  ASSERT(current_spill_slot_bit_count_ >= 0);
+
+  current_non_spill_slot_bit_count_ = DecodeLEB128(bits_container_, &offset);
+  ASSERT(current_non_spill_slot_bit_count_ >= 0);
+
+  const auto stackmap_bits = Length();
+  const uintptr_t stackmap_size =
+      Utils::RoundUp(stackmap_bits, kBitsPerByte) >> kBitsPerByteLog2;
+  ASSERT(stackmap_size <= (bits_container_.payload_size() - offset));
+
+  current_bits_offset_ = offset;
 }
 
 RawExceptionHandlers* ExceptionHandlerList::FinalizeExceptionHandlers(

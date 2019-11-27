@@ -16,6 +16,7 @@ namespace dart {
 
 class Elf;
 class InliningNode;
+class AssemblyCodeNamer;
 
 struct ScriptIndexPair {
   // Typedefs needed for the DirectChainedHashMap template.
@@ -285,7 +286,9 @@ class Dwarf : public ZoneAllocated {
   InliningNode* ExpandInliningTree(const Code& code);
   void WriteInliningNode(InliningNode* node,
                          intptr_t root_code_index,
-                         const Script& parent_script);
+                         intptr_t root_code_offset,
+                         const Script& parent_script,
+                         AssemblyCodeNamer* namer);
   void WriteLines();
 
   Zone* const zone_;

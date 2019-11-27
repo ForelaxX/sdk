@@ -206,8 +206,10 @@ String nameForType(SimpleIdentifier identifier, TypeAnnotation declaredType) {
       return null;
     }
     type = element.returnType;
+  } else if (element is FunctionTypeAliasElement) {
+    type = element.function.returnType;
   } else if (element is VariableElement) {
-    type = identifier.staticType;
+    type = element.type;
   } else {
     return null;
   }

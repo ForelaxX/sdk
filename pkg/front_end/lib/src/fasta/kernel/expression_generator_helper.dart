@@ -4,9 +4,10 @@
 
 library fasta.expression_generator_helper;
 
-import '../../scanner/token.dart' show Token;
+import 'package:_fe_analyzer_shared/src/scanner/token.dart' show Token;
 
 import '../builder/builder.dart';
+import '../builder/formal_parameter_builder.dart';
 import '../builder/library_builder.dart';
 import '../builder/prefix_builder.dart';
 import '../builder/type_declaration_builder.dart';
@@ -21,8 +22,6 @@ import '../messages.dart' show Message;
 import '../scope.dart' show Scope;
 
 import '../type_inference/inference_helper.dart' show InferenceHelper;
-
-import '../type_inference/type_promotion.dart' show TypePromoter;
 
 import 'constness.dart' show Constness;
 
@@ -48,10 +47,6 @@ import 'kernel_ast_api.dart'
 abstract class ExpressionGeneratorHelper implements InferenceHelper {
   LibraryBuilder get libraryBuilder;
 
-  TypePromoter get typePromoter;
-
-  int get functionNestingLevel;
-
   ConstantContext get constantContext;
 
   Forest get forest;
@@ -69,9 +64,9 @@ abstract class ExpressionGeneratorHelper implements InferenceHelper {
 
   Initializer buildInvalidInitializer(Expression expression, [int offset]);
 
-  Initializer buildFieldInitializer(bool isSynthetic, String name,
-      int fieldNameOffset, int assignmentOffset, Expression expression,
-      {DartType formalType});
+  List<Initializer> buildFieldInitializer(String name, int fieldNameOffset,
+      int assignmentOffset, Expression expression,
+      {FormalParameterBuilder formal});
 
   Initializer buildSuperInitializer(
       bool isSynthetic, Constructor constructor, Arguments arguments,
@@ -158,4 +153,9 @@ abstract class ExpressionGeneratorHelper implements InferenceHelper {
   /// Creates a [VariableGet] of the [variable] using [charOffset] as the file
   /// offset of the created node.
   Expression createVariableGet(VariableDeclaration variable, int charOffset);
+
+  /// Registers that [variable] is assigned to.
+  ///
+  /// This is needed for type promotion.
+  void registerVariableAssignment(VariableDeclaration variable);
 }

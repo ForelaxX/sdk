@@ -24,6 +24,9 @@ class DevCompilerTarget extends Target {
   bool get enableSuperMixins => true;
 
   @override
+  bool get supportsLateFields => false;
+
+  @override
   String get name => 'dartdevc';
 
   @override
@@ -57,6 +60,23 @@ class DevCompilerTarget extends Target {
         'dart:web_audio',
         'dart:web_gl',
         'dart:web_sql'
+      ];
+
+  // The libraries required to be indexed via CoreTypes.
+  @override
+  List<String> get extraIndexedLibraries => const [
+        'dart:async',
+        'dart:collection',
+        'dart:html',
+        'dart:indexed_db',
+        'dart:math',
+        'dart:svg',
+        'dart:web_audio',
+        'dart:web_gl',
+        'dart:web_sql',
+        'dart:_interceptors',
+        'dart:_js_helper',
+        'dart:_native_typed_data',
       ];
 
   @override
